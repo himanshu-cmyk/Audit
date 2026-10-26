@@ -1,0 +1,575 @@
+{
+  "meta": {
+    "url": "fixtures/sample-store.html",
+    "host": "fixture",
+    "crawledAt": "2026-10-26T05:18:03.525Z"
+  },
+  "analysis": {
+    "overall": 81,
+    "grade": "B",
+    "findings": [
+      {
+        "id": "a11y.image-alt",
+        "category": "accessibility",
+        "severity": "critical",
+        "title": "Images must have alternative text",
+        "detail": "Ensure <img> elements have alternative text or a role of none or presentation Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+        "recommendation": "Fix guidance: https://dequeuniversity.com/rules/axe/4.14/image-alt?application=axeAPI",
+        "evidence": "4 elements affected:\nimg:nth-child(2)\nimg:nth-child(3)\nimg:nth-child(4)",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "add_alt_admin",
+          "risk": "low",
+          "autoApplicable": false,
+          "explanation": "Ensure <img> elements have alternative text or a role of none or presentation Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+          "generated_fix": "Add alt text where the image lives in Admin, not in theme files. Product photos: the product's Media section. Theme images (banners/logos): the theme editor's alt field. Describe the image, e.g. \"Amul pure cow ghee 500 ml jar\". Leave blank only for purely decorative images.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "a11y.color-contrast",
+        "category": "accessibility",
+        "severity": "high",
+        "title": "Elements must meet minimum color contrast ratio thresholds",
+        "detail": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+        "recommendation": "Fix guidance: https://dequeuniversity.com/rules/axe/4.14/color-contrast?application=axeAPI",
+        "evidence": "1 element affected:\nmain > p",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "adjust_contrast",
+          "risk": "medium",
+          "autoApplicable": false,
+          "explanation": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+          "generated_fix": "Darken the text or lighten the background so the contrast ratio is at least 4.5:1 for body text. Check the specific colours in the theme's CSS variables.",
+          "estimated_impact": "Moderate effort, worthwhile improvement.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "a11y.html-has-lang",
+        "category": "accessibility",
+        "severity": "high",
+        "title": "<html> element must have a lang attribute",
+        "detail": "Ensure every HTML document has a lang attribute Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+        "recommendation": "Fix guidance: https://dequeuniversity.com/rules/axe/4.14/html-has-lang?application=axeAPI",
+        "evidence": "1 element affected:\nhtml",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "set_html_lang_theme",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "Ensure every HTML document has a lang attribute Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+          "generated_fix": "In theme.liquid set the html tag with the Liquid locale, e.g. <html lang=\"{{ request.locale.iso_code }}\">.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.meta-description.missing",
+        "category": "seo",
+        "severity": "medium",
+        "title": "Page is missing a meta description",
+        "detail": "The meta description is the grey summary line under your result in Google. A good one lifts click-through; a missing one lets Google scrape a random sentence.",
+        "recommendation": "Write a 140 to 160 character description per page that reads like an ad and mentions the product.",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "set_meta_admin",
+          "risk": "low",
+          "autoApplicable": false,
+          "explanation": "The meta description is the grey summary line under your result in Google.",
+          "generated_fix": "Set the meta description per page in Shopify Admin, not in theme.liquid (it is a dynamic value). For the homepage: Online Store > Preferences. For a product/collection/page: the \"Search engine listing\" section on that item, or the Admin API seo.description field. Write ~150 characters that read like an ad.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.structured-data.missing",
+        "category": "seo",
+        "severity": "medium",
+        "title": "No structured data (schema) found",
+        "detail": "Product schema is what lets Google show price, rating stars and stock status directly in search results. Without it you lose that eye-catching real estate.",
+        "recommendation": "Add Product and Organization JSON-LD schema; most Shopify themes and a free app can do this.",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "inject_schema_theme",
+          "risk": "medium",
+          "autoApplicable": true,
+          "explanation": "Product schema is what lets Google show price, rating stars and stock status directly in search results.",
+          "generated_fix": "Add Product JSON-LD in the product template using Liquid variables so each product fills its own values (name {{ product.title }}, price {{ product.price | money_without_currency }}, availability, image {{ product.featured_image | image_url }}). A free SEO app can also do this.",
+          "estimated_impact": "Moderate effort, worthwhile improvement.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "perf.cwv.lcp",
+        "category": "performance",
+        "severity": "medium",
+        "title": "Largest Contentful Paint (LCP) needs improvement",
+        "detail": "The largest content element painted in 3.67s. Google recommends an LCP under 2.5s for optimal user experience and SEO ranking.",
+        "recommendation": "Reduce render-blocking assets and optimize font/CSS loading so above-the-fold content paints faster.",
+        "evidence": "LCP render time: 3.67s (Google target: <= 2.5s)\nElement: <h1> heading/block <h1>Our Bestselling Ghee</h1>\nVisual area: 10440px²\nfetchpriority=\"high\": NO",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "preload_lcp_image",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "The largest content element painted in 3.67s.",
+          "generated_fix": "Preload the primary hero image in theme.liquid with high priority: {% if template == 'index' %}<link rel=\"preload\" as=\"image\" href=\"{{ hero_image | image_url: width: 1200 }}\" fetchpriority=\"high\">{% endif %}. Ensure it loads immediately before non-critical CSS/JS.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "perf.cwv.cls-unsized-images",
+        "category": "performance",
+        "severity": "medium",
+        "title": "Images missing width and height attributes (CLS risk)",
+        "detail": "4 images on this page lack explicit width and height attributes. Without dimensions, the browser cannot reserve vertical space before image bytes arrive, causing layout shifts (CLS) that push content down.",
+        "recommendation": "Add width and height attributes to all <img> tags, or use Shopify's image_tag filter which automatically sets proper width and height.",
+        "evidence": "4 unsized image(s) found:\nhttps://cdn.shopify.com/product1.jpg\nhttps://cdn.shopify.com/product2.jpg\nhttps://cdn.shopify.com/product3.jpg\nhttps://cdn.shopify.com/product4.jpg",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "add_image_dimensions",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "4 images on this page lack explicit width and height attributes.",
+          "generated_fix": "Ensure every <img> element has explicit width and height attributes matching its natural aspect ratio, or use Shopify's image_tag filter (e.g. {{ image | image_tag: width: 600, height: 600 }}) or CSS aspect-ratio so the browser reserves layout space before download.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "trust.policies.missing",
+        "category": "trust",
+        "severity": "medium",
+        "title": "Missing trust pages: Privacy Policy, Refund/Return Policy, Terms of Service, Contact page",
+        "detail": "Shoppers look for these before paying a store they do not know, and some are required for running ads on Meta and Google.",
+        "recommendation": "Add the missing policy and contact pages; Shopify can generate the policy text automatically.",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "create_policy_pages",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "Shoppers look for these before paying a store they do not know, and some are required for running ads on Meta and Google.",
+          "generated_fix": "Create the missing policy pages. In Shopify: Settings > Policies can auto-generate Privacy, Refund and Terms text; add a Contact page under Online Store > Pages.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "code.render-blocking",
+        "category": "performance",
+        "severity": "medium",
+        "title": "Render-blocking scripts in the head",
+        "detail": "Scripts placed in the head without async or defer stop the page from showing anything until they finish downloading and running. The shopper stares at a blank screen for longer than they need to.",
+        "recommendation": "Add defer (or async where safe) to these scripts, or move them just before the closing body tag.",
+        "evidence": "1 render-blocking script(s):\nhttps://cdn.shopify.com/s/shopify.js",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "defer_scripts",
+          "risk": "medium",
+          "autoApplicable": true,
+          "explanation": "Scripts placed in the head without async or defer stop the page from showing anything until they finish downloading and running.",
+          "generated_fix": "Add the defer attribute to render-blocking theme scripts, e.g. <script src=\"...\" defer></script>, or move them before the closing body tag. Test that nothing above the fold depends on them.",
+          "estimated_impact": "Moderate effort, worthwhile improvement.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "code.console-errors",
+        "category": "shopify",
+        "severity": "medium",
+        "title": "JavaScript errors thrown on load",
+        "detail": "The page is throwing errors while it loads. These can quietly break the add-to-cart button, tracking pixels or an app feature without any obvious visual sign, which means lost sales and blind spots in your ad data.",
+        "recommendation": "Have a developer open the browser console on this page and resolve the errors listed below.",
+        "evidence": "Failed to load resource: the server responded with a status of 404 ()",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "fix_js_errors",
+          "risk": "high",
+          "autoApplicable": false,
+          "explanation": "The page is throwing errors while it loads.",
+          "generated_fix": "Open the browser console on this page, reproduce each error, and fix or remove the script causing it. Often a removed app leaves a broken script behind.",
+          "estimated_impact": "Meaningful gain but review carefully before applying.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.title.length",
+        "category": "seo",
+        "severity": "low",
+        "title": "Title tag length is not ideal",
+        "detail": "This page's title is 4 characters. Google typically shows 50 to 60; too short wastes the slot, too long gets cut off.",
+        "recommendation": "Aim for a 50 to 60 character title that leads with the main keyword.",
+        "evidence": "Home",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "set_title_admin",
+          "risk": "low",
+          "autoApplicable": false,
+          "explanation": "This page's title is 4 characters.",
+          "generated_fix": "Set the page title per page in Shopify Admin, not in theme.liquid (it is a dynamic value). Homepage: Online Store > Preferences. Product/collection/page: the \"Search engine listing\" edit, or the Admin API seo.title field. Aim for 50-60 characters.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.h1.multiple",
+        "category": "seo",
+        "severity": "low",
+        "title": "Multiple H1 headings on a page",
+        "detail": "Multiple H1s dilute the page's main topic signal. One H1 per page is the convention.",
+        "recommendation": "Keep a single H1 and demote the rest to H2 or H3.",
+        "evidence": "2 H1 tags on this page",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "edit_heading",
+          "risk": "medium",
+          "autoApplicable": false,
+          "explanation": "Multiple H1s dilute the page's main topic signal.",
+          "generated_fix": "Keep exactly one <h1> describing the page's main topic; change the others to <h2>/<h3>.",
+          "estimated_impact": "Moderate effort, worthwhile improvement.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.img.alt-missing",
+        "category": "seo",
+        "severity": "low",
+        "title": "Images missing an alt attribute",
+        "detail": "Alt text describes an image to Google Images and to screen readers. Product photos without it miss a search channel and fail accessibility. (Images with a deliberate empty alt for decoration are not counted.)",
+        "recommendation": "Add descriptive alt text to every meaningful image; leave alt empty only for decorative ones.",
+        "evidence": "4 of 4 images have no alt attribute on this page",
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "add_alt_admin",
+          "risk": "low",
+          "autoApplicable": false,
+          "explanation": "Alt text describes an image to Google Images and to screen readers.",
+          "generated_fix": "Add alt text where the image lives in Admin, not in theme files. Product photos: the product's Media section. Theme images (banners/logos): the theme editor's alt field. Describe the image, e.g. \"Amul pure cow ghee 500 ml jar\". Leave blank only for purely decorative images.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.canonical.missing",
+        "category": "seo",
+        "severity": "low",
+        "title": "No canonical tag",
+        "detail": "A canonical tag tells Google which URL is the 'real' one when the same product is reachable through several URLs. Missing it can split ranking signals.",
+        "recommendation": "Add a self-referencing canonical link to each page (Shopify themes usually include this by default).",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "add_canonical_theme",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "A canonical tag tells Google which URL is the 'real' one when the same product is reachable through several URLs.",
+          "generated_fix": "Add a self-referencing canonical in theme.liquid using the Liquid variable (not a hardcoded URL): {% if canonical_url %}<link rel=\"canonical\" href=\"{{ canonical_url }}\">{% endif %}. Most modern themes include this already.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.og.missing",
+        "category": "seo",
+        "severity": "low",
+        "title": "No Open Graph tags for social sharing",
+        "detail": "Open Graph tags control the image and text shown when the page is shared on WhatsApp, Instagram or Facebook. Without them, links look bare and get fewer clicks.",
+        "recommendation": "Add og:title, og:description and og:image so shared links show a proper preview.",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "add_open_graph_theme",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "Open Graph tags control the image and text shown when the page is shared on WhatsApp, Instagram or Facebook.",
+          "generated_fix": "Add Open Graph tags in theme.liquid using Liquid variables so each page fills its own, e.g. <meta property=\"og:title\" content=\"{{ page_title }}\">, <meta property=\"og:url\" content=\"{{ canonical_url }}\">, plus og:description, og:image and og:type.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "seo.lang.missing",
+        "category": "seo",
+        "severity": "low",
+        "title": "HTML lang attribute missing",
+        "detail": "The lang attribute helps search engines and screen readers know the page language.",
+        "recommendation": "Set <html lang=\"en\"> (or the correct language) in the theme layout.",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "set_html_lang_theme",
+          "risk": "low",
+          "autoApplicable": true,
+          "explanation": "The lang attribute helps search engines and screen readers know the page language.",
+          "generated_fix": "In theme.liquid set the html tag with the Liquid locale, e.g. <html lang=\"{{ request.locale.iso_code }}\">.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      },
+      {
+        "id": "shopify.favicon.missing",
+        "category": "shopify",
+        "severity": "low",
+        "title": "No favicon set",
+        "detail": "The favicon is the little logo in the browser tab. Missing it looks unfinished and hurts brand recall.",
+        "recommendation": "Upload a favicon in the theme settings.",
+        "evidence": null,
+        "url": "file:///audit-tool/fixtures/sample-store.html",
+        "affectedUrls": [
+          "file:///audit-tool/fixtures/sample-store.html"
+        ],
+        "pageCount": 1,
+        "instances": 1,
+        "fix": {
+          "fix_type": "upload_favicon",
+          "risk": "low",
+          "autoApplicable": false,
+          "explanation": "The favicon is the little logo in the browser tab.",
+          "generated_fix": "Upload a 512x512 PNG favicon under Online Store > Themes > Customize > theme settings > Favicon.",
+          "estimated_impact": "Quick win, low effort, improves SEO or trust.",
+          "generatedBy": "template"
+        }
+      }
+    ],
+    "categoryScores": {
+      "performance": {
+        "key": "performance",
+        "label": "Speed & Performance",
+        "score": 85,
+        "grade": "B",
+        "count": 3
+      },
+      "seo": {
+        "key": "seo",
+        "label": "SEO & Discoverability",
+        "score": 78,
+        "grade": "C",
+        "count": 8
+      },
+      "accessibility": {
+        "key": "accessibility",
+        "label": "Accessibility",
+        "score": 51,
+        "grade": "D",
+        "count": 3
+      },
+      "links": {
+        "key": "links",
+        "label": "Broken Links",
+        "score": 100,
+        "grade": "A",
+        "count": 0
+      },
+      "shopify": {
+        "key": "shopify",
+        "label": "Shopify Setup",
+        "score": 93,
+        "grade": "A",
+        "count": 2
+      },
+      "trust": {
+        "key": "trust",
+        "label": "Trust & Conversion",
+        "score": 95,
+        "grade": "A",
+        "count": 1
+      }
+    },
+    "counts": {
+      "critical": 1,
+      "high": 2,
+      "medium": 7,
+      "low": 7
+    },
+    "pagesCrawled": [
+      "file:///audit-tool/fixtures/sample-store.html"
+    ],
+    "cwv": {
+      "fcp": 3668,
+      "lcp": {
+        "startTime": 3668,
+        "renderTime": 3668,
+        "size": 10440,
+        "url": null,
+        "id": null,
+        "tagName": "H1",
+        "className": null,
+        "isLazyLoaded": false,
+        "hasFetchPriorityHigh": false,
+        "snippet": "<h1>Our Bestselling Ghee</h1>"
+      },
+      "cls": 0,
+      "clsEntries": [],
+      "longTasks": [],
+      "tbt": 0
+    },
+    "cdpMetrics": {
+      "taskDuration": 863,
+      "scriptDuration": 32,
+      "layoutDuration": 93,
+      "recalcStyleDuration": 38,
+      "jsHeapUsedSize": 9167
+    },
+    "SEVERITY": {
+      "critical": {
+        "rank": 4,
+        "label": "Critical",
+        "weight": 25
+      },
+      "high": {
+        "rank": 3,
+        "label": "High",
+        "weight": 12
+      },
+      "medium": {
+        "rank": 2,
+        "label": "Medium",
+        "weight": 5
+      },
+      "low": {
+        "rank": 1,
+        "label": "Low",
+        "weight": 2
+      }
+    }
+  },
+  "narrative": {
+    "executiveSummary": "We ran an automated audit of your storefront and scored it 81 out of 100 (grade B). Your store is in good shape overall, with a handful of fixes that will tighten it further.\n\nIn total we found 17 issues: 1 critical, 2 high, 7 medium and 7 low. The 3 critical and high issues are where the real money is, and they are where we would start.\n\nThe section below lists the fixes in the order we would tackle them, with a plain explanation of why each one matters for your sales.",
+    "prioritizedActions": [
+      {
+        "title": "Fix: Images must have alternative text",
+        "why": "Ensure <img> elements have alternative text or a role of none or presentation Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+        "severity": "critical"
+      },
+      {
+        "title": "Fix: Elements must meet minimum color contrast ratio thresholds",
+        "why": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+        "severity": "high"
+      },
+      {
+        "title": "Fix: <html> element must have a lang attribute",
+        "why": "Ensure every HTML document has a lang attribute Accessibility issues lock out shoppers using screen readers or keyboard navigation, and increasingly affect SEO.",
+        "severity": "high"
+      },
+      {
+        "title": "Write a 140 to 160 character description per page that reads like an ad and mentions the product.",
+        "why": "The meta description is the grey summary line under your result in Google.",
+        "severity": "medium"
+      },
+      {
+        "title": "Add Product and Organization JSON-LD schema; most Shopify themes and a free app can do this.",
+        "why": "Product schema is what lets Google show price, rating stars and stock status directly in search results.",
+        "severity": "medium"
+      },
+      {
+        "title": "Reduce render-blocking assets and optimize font/CSS loading so above-the-fold content paints faster.",
+        "why": "The largest content element painted in 3.67s.",
+        "severity": "medium"
+      },
+      {
+        "title": "Add width and height attributes to all <img> tags, or use Shopify's image_tag filter which automatically sets proper width and height.",
+        "why": "4 images on this page lack explicit width and height attributes.",
+        "severity": "medium"
+      },
+      {
+        "title": "Add the missing policy and contact pages; Shopify can generate the policy text automatically.",
+        "why": "Shoppers look for these before paying a store they do not know, and some are required for running ads on Meta and Google.",
+        "severity": "medium"
+      }
+    ],
+    "categoryNarratives": {
+      "performance": "Speed & Performance scored 85 out of 100. We found 3 issues here. See the detailed findings below for exactly what to fix and why it matters.",
+      "seo": "SEO & Discoverability scored 78 out of 100. We found 8 issues here. See the detailed findings below for exactly what to fix and why it matters.",
+      "accessibility": "Accessibility scored 51 out of 100. We found 3 issues here. See the detailed findings below for exactly what to fix and why it matters.",
+      "shopify": "Shopify Setup scored 93 out of 100. We found 2 issues here. See the detailed findings below for exactly what to fix and why it matters.",
+      "trust": "Trust & Conversion scored 95 out of 100. We found 1 issue here. See the detailed findings below for exactly what to fix and why it matters."
+    },
+    "generatedBy": "rule-based"
+  }
+}
