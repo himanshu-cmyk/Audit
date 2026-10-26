@@ -2,7 +2,7 @@
 
 client_id = "301961d555c349d29921ed8c023130ed"
 name = "StoreAudit"
-application_url = "https://example.com"
+application_url = "https://audit-fvfo.onrender.com"
 embedded = true
 
 [access_scopes]
@@ -45,7 +45,7 @@ api_version = "2027-01"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://audit-fvfo.onrender.com/api/auth" ]
 
 [build]
 automatically_update_urls_on_dev = true
