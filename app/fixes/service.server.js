@@ -11,14 +11,21 @@
 //            -> FAILED         (error recorded; retry requires a fresh review)
 
 import crypto from "crypto";
-import { EXEC, EXEC_LABELS, VERIFY } from "./constants";
+import { EXEC, EXEC_LABELS, STORE_MATCH, VERIFY, proposalState } from "./constants";
 import { FixError } from "./graphql.server";
 import { parseAuditFile } from "./importer.server";
 import {
+  classifyFinding,
   eligibilityProblems,
   fixTypesForAuditId,
   getFixType,
+  grantedScopes,
+  rootCauseConfirmed,
 } from "./registry.server";
+import { WRITABLE_THEME_ROLES, listThemes } from "./handlers/theme.server";
+import { CONTRACT_VERSION, canonicalJson, sha256 } from "./reportContract.server";
+import { SOURCE_FORMATS } from "./importer.server";
+import { runAudit } from "../audit/engine.server";
 import { classifyStoreUrl, lookupByHandle } from "./resolve.server";
 import {
   canModifyStore,
@@ -27,6 +34,7 @@ import {
   validateStoreConfirmation,
 } from "./storeMatch.server";
 import { cleanLine, safeJsonParse } from "./text";
+import { unsupportedClaims } from "../ai/schema.server";
 
 const ID_RE = /^[a-z0-9]{10,40}$/i;
 const MAX_URLS_PER_PREPARE = 25;
@@ -49,12 +57,13 @@ function ctxFor({ admin, db, session, sleep, jobPolls, shopName }) {
 
 const normValue = (v) => (typeof v === "string" ? v.trim() : "");
 
-// Binds an approval to exactly one shop, finding, resource, fix type, value and
-// before-state. Recomputed at execution; any difference voids the approval.
+// Binds an approval to exactly one shop, revision, finding, resource, fix type,
+// value and before-state. Recomputed at execution; any difference voids the approval.
 // Keyed with the app secret when available so it cannot be recomputed from data alone.
-export function approvalHash(plan, shop, value, beforeValue) {
+export function approvalHash(plan, shop, value, beforeValue, revision) {
   const payload = JSON.stringify([
     shop,
+    revision ?? null,
     plan.importId,
     plan.findingKey,
     plan.fixType,
@@ -95,27 +104,164 @@ const ROOT_CAUSE_CODES = ["ROOT_CAUSE_NOT_ADMIN_DATA", "ROOT_CAUSE_UNCONFIRMED",
 
 // ---------------------------------------------------------------- imports
 
+// Importing records validated findings only. Identical content re-imported in the
+// same shop returns the existing import (with its own review state); nothing in a
+// file can carry or restore an approval.
 export async function createImport({ db, admin, session, text, fileName }) {
   const parsed = parseAuditFile(text);
+  const c = parsed.contract;
+  const existing = await db.auditImport.findFirst({ where: { shop: session.shop, contentDigest: c.contentDigest } });
+  if (existing) return { ...existing, duplicate: true };
   const shopInfo = await fetchShopInfo(admin);
   const match = evaluateStoreMatch(parsed.auditedHost, session.shop, shopInfo);
+  try {
+    return await db.auditImport.create({
+      data: {
+        shop: session.shop,
+        sourceFormat: parsed.sourceFormat,
+        fileName: cleanLine(fileName, 200),
+        auditedUrl: parsed.auditedUrl,
+        auditedHost: parsed.auditedHost,
+        auditDate: parsed.auditDate,
+        overallScore: parsed.overallScore,
+        grade: parsed.grade,
+        findingCount: parsed.findings.length,
+        findingsJson: JSON.stringify(parsed.findings),
+        importWarnings: parsed.warnings.length ? JSON.stringify(parsed.warnings) : null,
+        storeMatch: match.status,
+        storeMatchNote: match.note,
+        contractVersion: c.contractVersion,
+        sourceSchemaVersion: c.sourceSchemaVersion,
+        rawSha256: c.rawSha256,
+        contentDigest: c.contentDigest,
+        sourceGeneratedAt: c.generatedAt,
+        reportJson: JSON.stringify({
+          crawledAt: c.crawledAt,
+          device: c.device,
+          narrativeGeneratedBy: c.narrativeGeneratedBy,
+          pagesCrawled: c.pagesCrawled,
+          metrics: c.metrics,
+          narrative: c.narrative,
+          summaryNotes: c.summaryNotes,
+          unsupported: c.unsupported,
+        }),
+      },
+    });
+  } catch (err) {
+    // A concurrent upload of the same content won the unique (shop, contentDigest).
+    if (err?.code !== "P2002") throw err;
+    const row = await db.auditImport.findFirst({ where: { shop: session.shop, contentDigest: c.contentDigest } });
+    if (!row) throw err;
+    return { ...row, duplicate: true };
+  }
+}
+
+// Runs the in-app audit on the authenticated shop and stores it like an import.
+// The audit reads Admin data, the published theme and (optionally) public
+// storefront pages of the shop's own domain. It never changes the store.
+const AUDIT_COOLDOWN_MS = 60 * 1000;
+
+// storefrontPassword is used for this run only: it is passed to the audit and is
+// never stored, logged or included in the report.
+export async function createInAppAudit({
+  db,
+  admin,
+  session,
+  includeStorefront = true,
+  storefrontPassword = null,
+  themeId = null,
+  fetchPage,
+  pagespeedFetch,
+  env,
+  storefrontClientOptions,
+}) {
+  const selectedTheme = themeId ? await assertWritableTheme(admin, themeId) : null;
+  const recent = await db.auditImport.findFirst({
+    where: { shop: session.shop, sourceFormat: SOURCE_FORMATS.IN_APP, createdAt: { gt: new Date(Date.now() - AUDIT_COOLDOWN_MS) } },
+  });
+  if (recent) throw new FixError("AUDIT_TOO_SOON", "An audit was started less than a minute ago. Open it from the list below, or wait a moment.");
+  const shopInfo = await fetchShopInfo(admin);
+  const { host, startedAt, findings, report } = await runAudit({
+    admin,
+    shopInfo,
+    scopes: grantedScopes(session),
+    includeStorefront,
+    storefrontPassword: includeStorefront && typeof storefrontPassword === "string" && storefrontPassword ? storefrontPassword.slice(0, 200) : null,
+    ...(fetchPage ? { fetchPage } : {}),
+    ...(pagespeedFetch ? { pagespeedFetch } : {}),
+    ...(env ? { env } : {}),
+    ...(storefrontClientOptions ? { storefrontClientOptions } : {}),
+  });
+  const content = canonicalJson({ shop: session.shop, startedAt: startedAt.toISOString(), findings });
   return db.auditImport.create({
     data: {
       shop: session.shop,
-      sourceFormat: parsed.sourceFormat,
-      fileName: cleanLine(fileName, 200),
-      auditedUrl: parsed.auditedUrl,
-      auditedHost: parsed.auditedHost,
-      auditDate: parsed.auditDate,
-      overallScore: parsed.overallScore,
-      grade: parsed.grade,
-      findingCount: parsed.findings.length,
-      findingsJson: JSON.stringify(parsed.findings),
-      importWarnings: parsed.warnings.length ? JSON.stringify(parsed.warnings) : null,
-      storeMatch: match.status,
-      storeMatchNote: match.note,
+      sourceFormat: SOURCE_FORMATS.IN_APP,
+      fileName: null,
+      auditedUrl: `https://${host}/`,
+      auditedHost: host,
+      auditDate: startedAt,
+      overallScore: report.score.overall,
+      grade: report.score.grade,
+      findingCount: findings.length,
+      findingsJson: JSON.stringify(findings),
+      importWarnings: null,
+      // The audit read this shop's own data through its authenticated session.
+      storeMatch: STORE_MATCH.MATCHED,
+      storeMatchNote: "Audit run by this app on this store's own data.",
+      contractVersion: CONTRACT_VERSION,
+      sourceSchemaVersion: null,
+      rawSha256: null,
+      contentDigest: sha256(content),
+      sourceGeneratedAt: startedAt,
+      reportJson: JSON.stringify(report),
+      themeId: selectedTheme?.id ?? null,
     },
   });
+}
+
+async function assertWritableTheme(admin, themeId) {
+  const theme = (await listThemes(admin)).find((t) => t.id === themeId);
+  if (!theme) throw new FixError("NOT_FOUND", "That theme was not found in this store.");
+  if (!WRITABLE_THEME_ROLES.includes(theme.role)) {
+    throw new FixError("LIVE_THEME", "Choose an unpublished or development theme. The app never edits the live theme.");
+  }
+  return theme;
+}
+
+// Records the one theme that theme fixes for this audit are prepared against.
+export async function setImportTheme({ db, admin, session, importId, themeId }) {
+  const imp = await requireImport(db, session.shop, importId);
+  const theme = await assertWritableTheme(admin, String(themeId || ""));
+  await db.auditImport.update({ where: { id: imp.id }, data: { themeId: theme.id } });
+  return theme;
+}
+
+// Prepares every finding the app can fix, in one go. Each change is still only
+// a proposal: it must be reviewed, approved and confirmed before anything runs.
+export async function prepareAllFixable({ db, admin, session, importId }) {
+  const imp = await requireImport(db, session.shop, importId);
+  const totals = { findings: 0, created: 0, updated: 0, unchanged: 0, manual: [], skipped: [] };
+  for (const f of findingsOf(imp)) {
+    const c = classifyFinding(f);
+    if (c.status !== "auto") continue;
+    if (c.actionClass === "theme_patch" && !imp.themeId) {
+      totals.skipped.push({ key: f.key, reason: "No theme chosen for theme fixes." });
+      continue;
+    }
+    try {
+      const r = await prepareFinding({ db, admin, session, importId: imp.id, findingKey: f.key });
+      totals.findings++;
+      totals.created += r.created;
+      totals.updated += r.updated;
+      totals.unchanged += r.unchanged;
+      totals.manual.push(...r.manual.map((m) => ({ ...m, key: f.key })));
+    } catch (err) {
+      if (!(err instanceof FixError) || err.code === "SESSION_EXPIRED") throw err;
+      totals.skipped.push({ key: f.key, reason: err.message });
+    }
+  }
+  return totals;
 }
 
 export async function loadImport(db, shop, importId) {
@@ -147,15 +293,20 @@ export async function confirmStore({ db, session, importId, typedHost, acknowled
 
 export async function prepareFinding({ db, admin, session, importId, findingKey, themeId, acknowledgeUnconfirmed = false }) {
   const imp = await requireImport(db, session.shop, importId);
+  // The theme is chosen once per audit; an explicit themeId (tests, scripts) wins.
+  themeId = themeId || imp.themeId || null;
   const finding = findingsOf(imp).find((f) => f.key === findingKey);
   if (!finding) throw new FixError("NOT_FOUND", "Finding not found in this audit.");
+  if (finding.conflict) {
+    throw new FixError("UNSUPPORTED_FINDING", "This finding has conflicting entries in the imported file, so it cannot be fixed from this import.");
+  }
   const allDefs = fixTypesForAuditId(finding.auditId);
   if (!allDefs.length) {
     throw new FixError("UNSUPPORTED_FIX_TYPE", "This finding has no automatic fix. Follow the manual recommendation.");
   }
   // Changes whose link to the finding cannot be confirmed are only prepared when
   // the merchant explicitly acknowledges that they may not resolve it.
-  const defs = allDefs.filter((d) => d.rootCause !== "unconfirmed" || acknowledgeUnconfirmed);
+  const defs = allDefs.filter((d) => rootCauseConfirmed(d, finding.auditId) || acknowledgeUnconfirmed);
   if (!defs.length) {
     throw new FixError("ROOT_CAUSE_UNCONFIRMED", `${allDefs[0].rootCauseNote} Confirm that you want to prepare this related improvement anyway.`);
   }
@@ -214,7 +365,7 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
 
   if (themeDefs.length) {
     if (!themeId) {
-      throw new FixError("THEME_REQUIRED", "Choose an unpublished or development theme to prepare this fix.");
+      throw new FixError("THEME_REQUIRED", "Choose the theme to fix at the top of this page first. Only unpublished or development themes can be chosen.");
     }
     for (const def of themeDefs) {
       try {
@@ -273,7 +424,7 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
         unchanged++;
       }
     } else if ([EXEC.NEEDS_REVIEW, EXEC.STALE, EXEC.FAILED, EXEC.SKIPPED].includes(existing.status)) {
-      await db.fixExecution.update({ where: { id: existing.id }, data: fields });
+      await db.fixExecution.update({ where: { id: existing.id }, data: { ...fields, revision: { increment: 1 } } });
       updated++;
     } else {
       unchanged++; // APPROVED / APPLYING / APPLIED are never silently reset
@@ -284,11 +435,44 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
 
 // ---------------------------------------------------------------- approve
 
+// Records where an approved value came from. An AI suggestion id is only
+// accepted if it is a VALID suggestion for this exact change in this shop. AI
+// output never affects whether a change may run; it is recorded for the audit trail.
+async function valueSource(db, shop, plan, item, value, proposed, serverValue) {
+  if (serverValue) return { record: { type: plan.rollbackOfId ? "restore" : "deterministic_patch" }, warnings: [] };
+  if (item.aiSuggestionId !== undefined) {
+    const s = isValidId(item.aiSuggestionId)
+      ? await db.aiSuggestion.findFirst({
+          where: { id: item.aiSuggestionId, shop, executionId: plan.id, kind: "value", status: "VALID" },
+        })
+      : null;
+    if (!s) throw new FixError("REVIEW_OUTDATED", "The AI suggestion you used is not valid for this change. Reload and review it again.");
+    const out = safeJsonParse(s.outputJson, {});
+    const exact = out.proposedValue === value;
+    const warnings = [];
+    if (!exact) {
+      const unsupported = unsupportedClaimsFor(value, s.validationJson);
+      if (unsupported.length) warnings.push(`Your edit adds terms not found in the store's data: ${unsupported.join(", ")}. Check they are accurate.`);
+    }
+    return {
+      record: { type: exact ? "ai" : "ai_edited", suggestionId: s.id, provider: s.provider, model: s.model },
+      warnings,
+    };
+  }
+  return { record: { type: value === proposed.value ? "suggested" : "merchant" }, warnings: [] };
+}
+
+function unsupportedClaimsFor(value, validationJson) {
+  const sourceText = safeJsonParse(validationJson, {})?.sourceText;
+  return typeof sourceText === "string" ? unsupportedClaims(value, sourceText) : [];
+}
+
 async function markStale(db, plan, current, def) {
   await db.fixExecution.update({
     where: { id: plan.id },
     data: {
       status: EXEC.STALE,
+      revision: { increment: 1 },
       beforeJson: JSON.stringify(stripContent(current)),
       approvedJson: null,
       approvedAt: null,
@@ -328,6 +512,11 @@ export async function approvePlans({ db, admin, session, importId, items, env = 
       const problems = eligibilityProblems(def, { session, importRecord: imp, env });
       if (problems.length) throw new FixError("NOT_ELIGIBLE", problems.join(" "));
 
+      // The approval binds the exact revision the merchant reviewed. Any later
+      // refresh, stale check, edit or state change increments it.
+      if (item.seenRevision !== plan.revision) {
+        throw new FixError("REVIEW_OUTDATED", "This change was updated after you reviewed it. Reload and review it again.");
+      }
       // The approval must match what the merchant actually reviewed: the
       // before-value shown for text changes, and the exact patch for theme
       // changes and restores (whose value is server-generated, never typed).
@@ -352,20 +541,30 @@ export async function approvePlans({ db, admin, session, importId, items, env = 
       const v = validateFor(def, plan, value, current);
       if (!v.ok) throw new FixError("INVALID_VALUE", v.errors.join(" "));
 
-      const hash = approvalHash(plan, session.shop, v.value, def.handler.beforeValue(current));
+      const source = await valueSource(db, session.shop, plan, item, v.value, proposed, serverValue);
+      const revision = plan.revision + 1;
+      const hash = approvalHash(plan, session.shop, v.value, def.handler.beforeValue(current), revision);
       const claim = await db.fixExecution.updateMany({
-        where: { id: plan.id, shop: session.shop, status: plan.status },
+        where: { id: plan.id, shop: session.shop, status: plan.status, revision: plan.revision },
         data: {
           status: EXEC.APPROVED,
+          revision,
           approvedAt: new Date(),
-          approvedJson: JSON.stringify({ before: stripContent(current), value: v.value, warnings: v.warnings, hash }),
+          approvedJson: JSON.stringify({
+            before: stripContent(current),
+            value: v.value,
+            warnings: [...v.warnings, ...source.warnings],
+            hash,
+            revision,
+            source: source.record,
+          }),
           proposedJson: JSON.stringify({ ...proposed, value: v.value }),
           beforeJson: JSON.stringify(stripContent(current)),
           errorMessage: null,
         },
       });
       if (claim.count !== 1) throw new FixError("INVALID_STATE", "This change was modified by another request.");
-      results.push({ planId: plan.id, ok: true, warnings: v.warnings });
+      results.push({ planId: plan.id, ok: true, warnings: [...v.warnings, ...source.warnings] });
     } catch (err) {
       if (err instanceof FixError) {
         results.push({ planId: plan.id, ok: false, code: err.code, message: err.message });
@@ -379,9 +578,25 @@ export async function approvePlans({ db, admin, session, importId, items, env = 
 export async function unapprovePlan({ db, session, planId }) {
   const r = await db.fixExecution.updateMany({
     where: { id: planId, shop: session.shop, status: EXEC.APPROVED },
-    data: { status: EXEC.NEEDS_REVIEW, approvedJson: null, approvedAt: null },
+    data: { status: EXEC.NEEDS_REVIEW, approvedJson: null, approvedAt: null, revision: { increment: 1 } },
   });
   if (r.count !== 1) throw new FixError("INVALID_STATE", "Only approved changes can be returned to review.");
+}
+
+// The merchant decides a change needs manual handling. It can no longer be
+// approved or executed until it is returned to review (Retry in history).
+export async function markManualReview({ db, session, planId, note }) {
+  const r = await db.fixExecution.updateMany({
+    where: { id: planId, shop: session.shop, status: { in: [EXEC.NEEDS_REVIEW, EXEC.STALE, EXEC.APPROVED] } },
+    data: {
+      status: EXEC.MANUAL_REVIEW,
+      revision: { increment: 1 },
+      approvedJson: null,
+      approvedAt: null,
+      errorMessage: `Marked for manual review by the merchant${note ? `: ${cleanLine(note, 300)}` : "."}`,
+    },
+  });
+  if (r.count !== 1) throw new FixError("INVALID_STATE", "This change cannot be marked for manual review in its current state.");
 }
 
 export async function skipPlan({ db, session, planId }) {
@@ -391,7 +606,7 @@ export async function skipPlan({ db, session, planId }) {
       shop: session.shop,
       status: { in: [EXEC.NEEDS_REVIEW, EXEC.STALE, EXEC.APPROVED, EXEC.FAILED] },
     },
-    data: { status: EXEC.SKIPPED, approvedJson: null, approvedAt: null },
+    data: { status: EXEC.SKIPPED, approvedJson: null, approvedAt: null, revision: { increment: 1 } },
   });
   if (r.count !== 1) throw new FixError("INVALID_STATE", "This change cannot be skipped in its current state.");
 }
@@ -408,7 +623,10 @@ async function executeOne({ db, admin, session, imp, plan, env, sleep, jobPolls 
       throw new FixError("NOT_APPROVED", "This change has no valid approval.");
     }
     // The approval must still describe exactly this shop/finding/resource/fix/value/before-state.
-    if (approved.hash !== approvalHash(plan, session.shop, approved.value, def.handler.beforeValue(approved.before))) {
+    if (
+      approved.revision !== plan.revision ||
+      approved.hash !== approvalHash(plan, session.shop, approved.value, def.handler.beforeValue(approved.before), approved.revision)
+    ) {
       throw new FixError("APPROVAL_MISMATCH", "The approval does not match this change any more. Nothing was sent; review it again.");
     }
     const problems = eligibilityProblems(def, { session, importRecord: imp, env });
@@ -542,8 +760,8 @@ export async function retryPlan({ db, admin, session, planId }) {
   const stuck = plan.status === EXEC.APPLYING && Date.now() - new Date(plan.updatedAt).getTime() > STUCK_APPLYING_MS;
   const verifyFailed =
     plan.status === EXEC.APPLIED && [VERIFY.FAILED, VERIFY.UNAVAILABLE].includes(plan.verificationStatus);
-  if (!(plan.status === EXEC.FAILED || plan.status === EXEC.STALE || verifyFailed || stuck)) {
-    throw new FixError("INVALID_STATE", "Only failed, changed or unverified changes can be retried.");
+  if (!(plan.status === EXEC.FAILED || plan.status === EXEC.STALE || plan.status === EXEC.MANUAL_REVIEW || verifyFailed || stuck)) {
+    throw new FixError("INVALID_STATE", "Only failed, conflicting, manual-review or unverified changes can be returned to review.");
   }
   if (plan.rollbackOfId) {
     throw new FixError("INVALID_STATE", "A restore cannot be retried directly. Prepare the rollback again from the original change, so its conflict checks run again.");
@@ -558,6 +776,7 @@ export async function retryPlan({ db, admin, session, planId }) {
     approvedAt: null,
     errorMessage: null,
     retryable: false,
+    revision: { increment: 1 },
   };
   if (def.executionKind === "theme") {
     // Recompute the patch from the theme's current file; this refuses if the
@@ -567,6 +786,27 @@ export async function retryPlan({ db, admin, session, planId }) {
     data.proposedJson = JSON.stringify(draft.proposed);
   } else {
     const current = await def.handler.fetchCurrent(ctx, plan);
+    // Reconcile an interrupted or ambiguous write before anything else: if the
+    // approved value is already saved, record that (verified by read-back)
+    // instead of asking the merchant to send it again.
+    const approved = safeJsonParse(plan.approvedJson);
+    if ((plan.status === EXEC.FAILED || stuck) && typeof approved?.value === "string" && def.handler.alreadyApplied(current, approved.value)) {
+      const r = await db.fixExecution.updateMany({
+        where: { id: plan.id, shop: session.shop, status: plan.status },
+        data: {
+          status: EXEC.APPLIED,
+          appliedAt: new Date(),
+          errorMessage: null,
+          retryable: false,
+          resultJson: JSON.stringify({ mutation: null, reconciled: true, note: "Reconciled after an interrupted attempt: Shopify already has the approved value." }),
+          verificationStatus: VERIFY.PASSED,
+          verificationJson: JSON.stringify({ message: "Read back from Shopify during reconciliation: the saved value matches the approved value.", details: { after: stripContent(current) } }),
+          verifiedAt: new Date(),
+        },
+      });
+      if (r.count !== 1) throw new FixError("INVALID_STATE", "This change was modified by another request.");
+      return { importId: plan.importId, reconciled: true };
+    }
     data.beforeJson = JSON.stringify(stripContent(current));
   }
   // A retry never re-sends anything: it returns the change to review with the
@@ -576,7 +816,7 @@ export async function retryPlan({ db, admin, session, planId }) {
     data,
   });
   if (r.count !== 1) throw new FixError("INVALID_STATE", "This change was modified by another request.");
-  return plan.importId;
+  return { importId: plan.importId, reconciled: false };
 }
 
 export async function reverifyPlan({ db, admin, session, planId, sleep }) {
@@ -719,6 +959,8 @@ export function serializePlan(p) {
     resourceLabel: p.resourceLabel,
     targetUrl: p.targetUrl,
     rollbackOfId: p.rollbackOfId ?? null,
+    revision: p.revision,
+    state: proposalState(p.status, p.verificationStatus),
     before: safeJsonParse(p.beforeJson, {}),
     proposed: safeJsonParse(p.proposedJson, {}),
     approved: safeJsonParse(p.approvedJson),

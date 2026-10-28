@@ -2,10 +2,11 @@
 // A fix type exists here only if it has a deterministic execution handler and a
 // verification handler. Audit files, the browser and AI output cannot add to it.
 
-import { CHANGE_SCOPES } from "./constants";
+import { ACTION_CLASSES, CHANGE_SCOPES } from "./constants";
 import { canModifyStore } from "./storeMatch.server";
+import { isKnownSourceId } from "./reportContract.server";
 
-export { CHANGE_SCOPES };
+export { ACTION_CLASSES, CHANGE_SCOPES };
 import { FixError } from "./graphql.server";
 import { makeSeoHandler } from "./handlers/seo.server";
 import { makeImageAltHandler } from "./handlers/imageAlt.server";
@@ -15,7 +16,7 @@ import { makeThemeHandler } from "./handlers/theme.server";
 // title, so a missing <title> tag is a theme problem, not Admin data.
 const TITLE_IDS = ["seo.title.length"];
 const DESCRIPTION_IDS = ["seo.meta-description.missing", "seo.meta-description.length"];
-const ALT_IDS = ["seo.img.alt-missing", "a11y.image-alt"];
+const ALT_IDS = ["seo.img.alt-missing", "a11y.image-alt", "admin.media.alt-missing"];
 
 const ADMIN_API = "admin_api";
 const THEME = "theme";
@@ -89,6 +90,8 @@ export const FIX_TYPES = Object.freeze({
     risk: "low",
     requiredScopes: ["write_products", "write_files"],
     rootCause: "unconfirmed",
+    // Found by the in-app audit directly on product media, so the cause is known.
+    confirmedFor: ["admin.media.alt-missing"],
     rootCauseNote:
       "The audit counts <img> tags with no alt attribute. Most themes render product images with empty alt text as alt=\"\", which the audit does not count, so the flagged images are often theme or app images. Adding alt text to product images in Admin is a real accessibility improvement but may not resolve this finding.",
     handler: makeImageAltHandler(),
@@ -116,6 +119,11 @@ export const FIX_TYPES = Object.freeze({
     handler: makeThemeHandler("theme_canonical_tag"),
   }),
 });
+
+// Whether a fix type's link to this finding is established without asking the merchant.
+export function rootCauseConfirmed(def, auditId) {
+  return def.rootCause !== "unconfirmed" || (def.confirmedFor || []).includes(auditId);
+}
 
 export function getFixType(type) {
   if (typeof type !== "string" || !Object.prototype.hasOwnProperty.call(FIX_TYPES, type)) {
@@ -149,7 +157,7 @@ export function themeWritesStatus(session, env = process.env) {
     return {
       enabled: false,
       reason:
-        "Theme file writes are disabled. Public apps need Shopify's theme modification exemption; set THEME_WRITES_ENABLED=true only after Shopify grants it. You can still preview the exact patch and apply it manually.",
+        "Theme file writes are disabled. This app is configured for App Store distribution, and App Store apps need a theme modification exemption granted by Shopify before they can write theme files (Shopify may decline it). Set THEME_WRITES_ENABLED=true only after Shopify confirms it. Until then, preview the exact patch here and apply it yourself in Online Store > Themes > Edit code on an unpublished theme.",
     };
   }
   return { enabled: true, reason: null };
@@ -201,20 +209,37 @@ export function manualReason(finding) {
 // cause in Shopify and propose a verifiable change; the check itself still runs at
 // prepare time and may downgrade individual pages to manual review.
 export function classifyFinding(finding) {
+  const out = (status, actionClass, extra) => ({ status, actionClass, actionLabel: ACTION_CLASSES[actionClass], ...extra });
+  if (finding.conflict || !isKnownSourceId(finding.auditId)) {
+    return out("unsupported", "unsupported", {
+      label: "Unsupported",
+      changeScopes: [],
+      reason: finding.conflict
+        ? finding.conflictNote || "The file contains conflicting entries for this finding."
+        : "This issue id is not produced by the supported audit tool version, so the app cannot interpret it. Review it manually.",
+    });
+  }
   const defs = fixTypesForAuditId(finding.auditId);
   if (!defs.length) {
-    return { status: "manual", label: "Manual fix", changeScopes: [], reason: manualReason(finding) };
+    return out("manual", "manual", { label: "Manual fix", changeScopes: [], reason: manualReason(finding) });
   }
-  const unconfirmed = defs.filter((d) => d.rootCause === "unconfirmed");
+  const unconfirmed = defs.filter((d) => !rootCauseConfirmed(d, finding.auditId));
   const scopes = [...new Set(defs.map((d) => d.changeScope))];
   if (unconfirmed.length === defs.length) {
-    return {
-      status: "manual_review",
+    return out("manual_review", "needs_evidence", {
       label: "Requires Manual Review",
       changeScopes: scopes,
       reason: unconfirmed[0].rootCauseNote,
       optionalImprovement: true,
-    };
+    });
   }
-  return { status: "auto", label: "Automatic fix (after review)", changeScopes: scopes, reason: null };
+  const theme = defs.every((d) => d.executionKind === THEME);
+  if (!theme && !(finding.affectedUrls || []).length) {
+    return out("auto", "needs_evidence", {
+      label: "Automatic fix (after review)",
+      changeScopes: scopes,
+      reason: "The report lists no affected pages, so there is no product or collection to resolve.",
+    });
+  }
+  return out("auto", theme ? "theme_patch" : "admin_api", { label: "Automatic fix (after review)", changeScopes: scopes, reason: null });
 }

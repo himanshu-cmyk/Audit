@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-20T10:05:00.000Z",
+  "meta": {
+    "url": "https://www.example-store.com/",
+    "host": "www.example-store.com",
+    "crawledAt": "2026-10-20T10:00:00.000Z",
+    "device": "desktop",
+    "narrativeGeneratedBy": "template"
+  },
+  "summary": {
+    "overall": 72,
+    "grade": "C",
+    "counts": {
+      "critical": 0,
+      "high": 1,
+      "medium": 6,
+      "low": 0
+    },
+    "totalFindings": 7,
+    "autoApplicableFixes": 0,
+    "pagesCrawled": [
+      "https://www.example-store.com/",
+      "https://www.example-store.com/products/blue-shirt"
+    ]
+  },
+  "overall": 72,
+  "grade": "C",
+  "findings": [
+    {
+      "id": "seo.meta-description.missing",
+      "category": "seo",
+      "severity": "medium",
+      "title": "Finding seo.meta-description.missing",
+      "detail": "Detail for seo.meta-description.missing.",
+      "recommendation": "Recommendation for seo.meta-description.missing.",
+      "evidence": null,
+      "url": "https://www.example-store.com/products/karela-jamun-juice",
+      "affectedUrls": [
+        "https://www.example-store.com/products/karela-jamun-juice",
+        "https://www.example-store.com/collections/juices",
+        "https://www.example-store.com/collections/all",
+        "https://www.example-store.com/pages/about"
+      ],
+      "pageCount": 4,
+      "instances": 4,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    },
+    {
+      "id": "seo.title.length",
+      "category": "seo",
+      "severity": "medium",
+      "title": "Finding seo.title.length",
+      "detail": "Detail for seo.title.length.",
+      "recommendation": "Recommendation for seo.title.length.",
+      "evidence": null,
+      "url": "https://www.example-store.com/en-gb/products/amla-juice",
+      "affectedUrls": [
+        "https://www.example-store.com/en-gb/products/amla-juice",
+        "https://www.example-store.com/collections/oils/products/coconut-oil"
+      ],
+      "pageCount": 2,
+      "instances": 2,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    },
+    {
+      "id": "seo.img.alt-missing",
+      "category": "seo",
+      "severity": "medium",
+      "title": "Finding seo.img.alt-missing",
+      "detail": "Detail for seo.img.alt-missing.",
+      "recommendation": "Recommendation for seo.img.alt-missing.",
+      "evidence": "3 <img> without alt\nimg.hero",
+      "url": "https://www.example-store.com/products/karela-jamun-juice",
+      "affectedUrls": [
+        "https://www.example-store.com/products/karela-jamun-juice"
+      ],
+      "pageCount": 1,
+      "instances": 1,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    },
+    {
+      "id": "seo.lang.missing",
+      "category": "seo",
+      "severity": "medium",
+      "title": "Finding seo.lang.missing",
+      "detail": "Detail for seo.lang.missing.",
+      "recommendation": "Recommendation for seo.lang.missing.",
+      "evidence": null,
+      "url": "https://www.example-store.com/",
+      "affectedUrls": [
+        "https://www.example-store.com/"
+      ],
+      "pageCount": 1,
+      "instances": 1,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    },
+    {
+      "id": "perf.cwv.lcp",
+      "category": "performance",
+      "severity": "high",
+      "title": "Finding perf.cwv.lcp",
+      "detail": "Detail for perf.cwv.lcp.",
+      "recommendation": "Recommendation for perf.cwv.lcp.",
+      "evidence": "LCP 4.2s (img.hero, lazy-loaded)",
+      "url": "https://www.example-store.com/",
+      "affectedUrls": [
+        "https://www.example-store.com/"
+      ],
+      "pageCount": 1,
+      "instances": 1,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    },
+    {
+      "id": "a11y.color-contrast",
+      "category": "accessibility",
+      "severity": "medium",
+      "title": "Finding a11y.color-contrast",
+      "detail": "Detail for a11y.color-contrast.",
+      "recommendation": "Recommendation for a11y.color-contrast.",
+      "evidence": null,
+      "url": "https://www.example-store.com/",
+      "affectedUrls": [
+        "https://www.example-store.com/"
+      ],
+      "pageCount": 1,
+      "instances": 1,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    },
+    {
+      "id": "seo.robots.blocked",
+      "category": "seo",
+      "severity": "medium",
+      "title": "Finding seo.robots.blocked",
+      "detail": "Detail for seo.robots.blocked.",
+      "recommendation": "Recommendation for seo.robots.blocked.",
+      "evidence": null,
+      "url": "https://www.example-store.com/",
+      "affectedUrls": [
+        "https://www.example-store.com/"
+      ],
+      "pageCount": 1,
+      "instances": 1,
+      "fix": {
+        "fix_type": "set_meta_admin",
+        "risk": "low",
+        "autoApplicable": false,
+        "explanation": "Explanation.",
+        "generated_fix": "Template steps.",
+        "estimated_impact": "Quick win.",
+        "generatedBy": "template"
+      }
+    }
+  ],
+  "categoryScores": {
+    "seo": {
+      "key": "seo",
+      "label": "SEO",
+      "score": 70,
+      "grade": "C",
+      "count": 7
+    }
+  },
+  "counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 6,
+    "low": 0
+  },
+  "pagesCrawled": [
+    "https://www.example-store.com/",
+    "https://www.example-store.com/products/blue-shirt"
+  ],
+  "cwv": {
+    "fcp": 812.4,
+    "lcp": {
+      "startTime": 1490,
+      "renderTime": 1520.6,
+      "size": 120000,
+      "url": "https://www.example-store.com/cdn/hero.jpg",
+      "id": "",
+      "tagName": "IMG",
+      "className": "hero",
+      "isLazyLoaded": true,
+      "hasFetchPriorityHigh": false,
+      "snippet": "<img class=hero>"
+    },
+    "cls": 0.1234,
+    "clsEntries": [
+      {
+        "value": 0.1234,
+        "sources": [
+          {
+            "tagName": "DIV",
+            "className": "banner",
+            "id": ""
+          }
+        ]
+      }
+    ],
+    "longTasks": [
+      {
+        "startTime": 900,
+        "duration": 120,
+        "blockingDuration": 70,
+        "name": "self",
+        "attribution": "script"
+      }
+    ],
+    "tbt": 70
+  },
+  "cdpMetrics": {
+    "taskDuration": 1500.2,
+    "scriptDuration": 640.7,
+    "layoutDuration": 80.1,
+    "recalcStyleDuration": 45.5,
+    "jsHeapUsedSize": 10240
+  },
+  "narrative": {
+    "executiveSummary": "The store loads reasonably but several SEO fields are missing.",
+    "prioritizedActions": [
+      {
+        "title": "Add meta descriptions",
+        "why": "Search snippets",
+        "severity": "medium"
+      }
+    ],
+    "categoryNarratives": {
+      "seo": "SEO text."
+    },
+    "generatedBy": "template"
+  }
+}

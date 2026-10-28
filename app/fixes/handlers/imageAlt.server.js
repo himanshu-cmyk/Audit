@@ -69,6 +69,20 @@ async function fetchProductImages(ctx, productId) {
   return { product: p, images };
 }
 
+// Alt text that exists but gives no useful description: file names, camera
+// names, generic words, or a bare copy of the product handle.
+const GENERIC_ALT = new Set(["image", "img", "photo", "picture", "pic", "product", "product image", "thumbnail", "untitled", "default"]);
+export function isWeakAlt(alt, product = {}) {
+  const a = norm(alt).toLowerCase();
+  if (!a) return true;
+  if (a.length < 4) return true;
+  if (GENERIC_ALT.has(a)) return true;
+  if (/\.(jpe?g|png|webp|gif|avif|heic)$/i.test(a)) return true;
+  if (/^(img|dsc|dscn|pxl|image|photo|screenshot)[\s_-]*\d+/i.test(a)) return true;
+  if (product.handle && a === product.handle.toLowerCase()) return true;
+  return false;
+}
+
 const sleepDefault = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function makeImageAltHandler() {
@@ -100,7 +114,7 @@ export function makeImageAltHandler() {
     async prepare(ctx, target) {
       const { product, images } = await fetchProductImages(ctx, target.resource.id);
       // Only READY images: alt updates on processing or failed media are unreliable.
-      const missing = images.filter((m) => !norm(m.alt) && m.status === "READY");
+      const missing = images.filter((m) => isWeakAlt(m.alt, product) && m.status === "READY");
       return missing.map((m) => {
         const suggestion = suggestAltText({
           productTitle: product.title,
@@ -110,7 +124,7 @@ export function makeImageAltHandler() {
           resourceType: "MediaImage",
           resourceId: m.id,
           parentResourceId: product.id,
-          resourceLabel: `${product.title} (image ${m.position})`,
+          resourceLabel: `${product.title} (image ${m.position}${norm(m.alt) ? ", weak alt text" : ""})`,
           targetUrl: target.url,
           before: {
             productId: product.id,
@@ -120,7 +134,10 @@ export function makeImageAltHandler() {
             alt: m.alt ?? null,
             imageUrl: cdnImageUrl(m.image?.url),
           },
-          proposed: { value: suggestion.value, note: suggestion.note },
+          proposed: {
+            value: suggestion.value,
+            note: `${suggestion.note} Alt text is stored on the image file itself; if the same file is also used elsewhere in your store, the new alt text applies there too.`,
+          },
         };
       });
     },

@@ -3,7 +3,7 @@
 // rendered as React text (escaped); nothing here renders HTML from data.
 
 import {
-  EXEC_LABELS,
+  execLabel,
   RISK_TONE,
   SEVERITY_TONE,
   VERIFY,
@@ -36,7 +36,7 @@ export function RiskBadge({ risk }) {
 export function PlanBadges({ plan }) {
   return (
     <s-stack direction="inline" gap="small-200">
-      <s-badge tone={execTone(plan.status)}>{EXEC_LABELS[plan.status] || plan.status}</s-badge>
+      <s-badge tone={execTone(plan.status, plan.verificationStatus)}>{execLabel(plan.status, plan.verificationStatus)}</s-badge>
       {plan.verificationStatus !== VERIFY.NOT_STARTED && (
         <s-badge tone={verifyTone(plan.verificationStatus)}>
           {VERIFY_LABELS[plan.verificationStatus] || plan.verificationStatus}
@@ -85,6 +85,108 @@ export function DiffView({ diff }) {
       </s-box>
     </s-grid>
   );
+}
+
+// Shows an AI recommendation or analysis. Always labelled as advisory: it is
+// not a validated fix proposal until the merchant uses it and approves it.
+export function AiPanel({ suggestion, onUse, useDisabled }) {
+  if (!suggestion) return null;
+  const s = suggestion;
+  const o = s.output;
+  const heading =
+    s.status === "VALID"
+      ? `AI recommendation (${s.model}), advisory only`
+      : s.status === "INVALID"
+        ? "AI recommendation rejected by validation"
+        : "AI request failed";
+  return (
+    <s-box padding="small" borderWidth="base" borderRadius="base">
+      <s-stack direction="block" gap="small-200">
+        <s-stack direction="inline" gap="small" alignItems="center">
+          <s-text type="strong">{heading}</s-text>
+          {o?.confidence != null && <s-badge tone="neutral">{`Confidence ${Math.round(o.confidence * 100)}%`}</s-badge>}
+          {o?.risk && <RiskBadge risk={o.risk} />}
+          <s-text color="subdued">{fmtDate(s.createdAt)}</s-text>
+        </s-stack>
+        {s.status === "ERROR" && <s-text tone="critical">{s.errorMessage}</s-text>}
+        {s.status === "INVALID" && (
+          <s-unordered-list>
+            {s.errors.map((e, i) => (
+              <s-list-item key={i}>{e}</s-list-item>
+            ))}
+          </s-unordered-list>
+        )}
+        {o && (
+          <>
+            {o.proposedValue && s.status === "VALID" && (
+              <s-box padding="small" background="subdued" borderRadius="base">
+                <s-text type="strong">Suggested value: </s-text>
+                <s-text>{o.proposedValue}</s-text>
+              </s-box>
+            )}
+            {o.likelyRootCause && (
+              <s-paragraph>
+                <s-text type="strong">Likely root cause: </s-text>
+                {o.likelyRootCause}
+                {o.evidenceRefs?.length > 0 ? ` (based on evidence ${o.evidenceRefs.join(", ")})` : " (no evidence cited)"}
+              </s-paragraph>
+            )}
+            {o.uncertainties?.length > 0 && (
+              <s-paragraph>
+                <s-text type="strong">Uncertainties: </s-text>
+                {o.uncertainties.join(" · ")}
+              </s-paragraph>
+            )}
+            {o.recommendedAction && (
+              <s-paragraph>
+                <s-text type="strong">Recommended action: </s-text>
+                {o.recommendedAction}
+              </s-paragraph>
+            )}
+            {o.validationRequirements?.length > 0 && (
+              <s-paragraph>
+                <s-text type="strong">How to verify: </s-text>
+                {o.validationRequirements.join(" · ")}
+              </s-paragraph>
+            )}
+            {o.patchCandidate && (
+              <s-box padding="small" background="subdued" borderRadius="base">
+                <s-text type="strong">Illustrative code from the AI (unverified, never applied by this app)</s-text>
+                <pre style={preStyle}>{o.patchCandidate}</pre>
+              </s-box>
+            )}
+            {o.manualReviewReason && <s-text color="subdued">Manual work needed: {o.manualReviewReason}</s-text>}
+            {typeof o.automationSuggested === "boolean" && (
+              <s-text color="subdued">
+                AI opinion on automation: {o.automationSuggested ? "could be automated" : "manual"}. The app&apos;s own
+                checks decide what can run.
+              </s-text>
+            )}
+          </>
+        )}
+        {onUse && s.status === "VALID" && o?.proposedValue && (
+          <s-button variant="secondary" onClick={onUse} {...flag("disabled", useDisabled)}>
+            Use this suggestion (you can still edit it)
+          </s-button>
+        )}
+      </s-stack>
+    </s-box>
+  );
+}
+
+const SOURCE_LABELS = {
+  ai: "AI suggestion, approved unchanged",
+  ai_edited: "AI suggestion, edited by merchant",
+  suggested: "App suggestion from store data",
+  merchant: "Written by merchant",
+  deterministic_patch: "Deterministic theme patch",
+  restore: "Restore of the recorded previous value",
+};
+
+export function valueSourceLabel(source) {
+  if (!source?.type) return null;
+  const base = SOURCE_LABELS[source.type] || source.type;
+  return source.model ? `${base} (${source.provider} ${source.model})` : base;
 }
 
 export function beforeValueOf(plan) {

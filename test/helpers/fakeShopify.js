@@ -5,7 +5,7 @@
 // Used by unit tests and the dry-run script; it never talks to Shopify.
 
 export const DEFAULT_SCOPES =
-  "write_products,write_metaobjects,write_metaobject_definitions,read_themes,read_files,write_files,write_themes";
+  "write_products,write_metaobjects,write_metaobject_definitions,read_themes,read_files,write_files,write_themes,read_legal_policies,read_online_store_pages,read_content,read_online_store_navigation";
 
 let nextId = 1000;
 const gid = (type) => `gid://shopify/${type}/${nextId++}`;
@@ -19,6 +19,13 @@ export function createFakeShop({
     products: new Map(),
     collections: new Map(),
     themes: new Map(),
+    policies: [],
+    pages: [],
+    articles: [],
+    menus: [],
+    passwordProtected: false,
+    // What Shopify reports as granted; defaults to the session scopes.
+    grantedScopes: null,
     calls: [],
     interceptors: {},
     ignoreWrites: false,
@@ -37,8 +44,8 @@ export function createFakeShop({
       state.products.set(p.id, p);
       return p;
     },
-    addCollection({ title, handle, description = "", seoTitle = null, seoDescription = null }) {
-      const c = { id: gid("Collection"), title, handle, description, seo: { title: seoTitle, description: seoDescription } };
+    addCollection({ title, handle, description = "", seoTitle = null, seoDescription = null, productsCount = 3, image = null }) {
+      const c = { id: gid("Collection"), title, handle, description, seo: { title: seoTitle, description: seoDescription }, productsCount, image };
       state.collections.set(c.id, c);
       return c;
     },
@@ -143,6 +150,49 @@ export function createFakeShop({
       };
     },
     StoreAuditJob: ({ id }) => ({ job: { id, done: true } }),
+    StoreAuditGrantedScopes: () => ({
+      currentAppInstallation: { accessScopes: (state.grantedScopes ?? DEFAULT_SCOPES.split(",")).map((handle) => ({ handle })) },
+    }),
+    StoreAuditProductCounts: () => {
+      const all = [...state.products.values()];
+      const n = (st) => all.filter((x) => (x.status || "ACTIVE") === st).length;
+      return { all: { count: all.length }, active: { count: n("ACTIVE") }, draft: { count: n("DRAFT") } };
+    },
+    StoreAuditStoreSetup: () => ({ shop: { contactEmail: "owner@example.com", primaryDomain: { host: primaryHost } }, onlineStore: { passwordProtection: { enabled: state.passwordProtected } } }),
+    StoreAuditScanPages: () => ({ pages: { nodes: state.pages } }),
+    StoreAuditScanArticles: () => ({ articles: { nodes: state.articles } }),
+    StoreAuditMenus: () => ({ menus: { nodes: state.menus } }),
+    StoreAuditShopPolicies: () => ({ shop: { shopPolicies: state.policies } }),
+    // Paginated scans used by the in-app audit. Cursors are list offsets.
+    StoreAuditScanProducts: ({ first, after }) => {
+      const all = [...state.products.values()].filter((p) => (p.status || "ACTIVE") === "ACTIVE");
+      const start = after ? Number(after) : 0;
+      const page = all.slice(start, start + first);
+      return {
+        products: {
+          nodes: page.map((p) => ({
+            id: p.id,
+            handle: p.handle,
+            title: p.title,
+            description: p.description,
+            seo: seoOut(p),
+            priceRangeV2: { maxVariantPrice: { amount: String(p.price ?? "10.0") } },
+            media: { nodes: p.media.map((m) => ({ id: m.id, alt: m.alt, status: m.status, mediaContentType: "IMAGE" })) },
+          })),
+          pageInfo: { hasNextPage: start + first < all.length, endCursor: String(start + first) },
+        },
+      };
+    },
+    StoreAuditScanCollections: ({ first, after }) => {
+      const all = [...state.collections.values()];
+      const start = after ? Number(after) : 0;
+      return {
+        collections: {
+          nodes: all.slice(start, start + first).map((c) => ({ id: c.id, handle: c.handle, title: c.title, description: c.description, seo: seoOut(c), productsCount: { count: c.productsCount }, image: c.image })),
+          pageInfo: { hasNextPage: start + first < all.length, endCursor: String(start + first) },
+        },
+      };
+    },
   };
 
   const admin = {

@@ -49,7 +49,7 @@ const base = { db, admin: fake.admin, session: fake.session };
 
 try {
   // ---- seed the fake store from the audit's URLs
-  const rawFindings = raw.analysis?.findings || raw.fixes || [];
+  const rawFindings = raw.findings || raw.analysis?.findings || raw.fixes || [];
   const seeded = new Set();
   for (const f of rawFindings) {
     for (const u of [f.url, ...(f.affectedUrls || [])].filter(Boolean)) {
@@ -139,8 +139,8 @@ try {
       const def = FIX_TYPES[p.fixType];
       const proposed = JSON.parse(p.proposedJson);
       return p.executionKind === "theme"
-        ? { planId: p.id, seenProposed: proposed.value }
-        : { planId: p.id, value: proposed.value, seenBefore: def.handler.beforeValue(JSON.parse(p.beforeJson)) };
+        ? { planId: p.id, seenRevision: p.revision, seenProposed: proposed.value }
+        : { planId: p.id, seenRevision: p.revision, value: proposed.value, seenBefore: def.handler.beforeValue(JSON.parse(p.beforeJson)) };
     });
     const approvals = await approvePlans({ ...base, importId: imp.id, items, env });
     for (const a of approvals) {

@@ -45,8 +45,17 @@ beforeAll(async () => {
   await prepareFinding({ ...base, importId, findingKey: "seo.img.alt-missing", acknowledgeUnconfirmed: true });
   const plans = await testDb.db.fixExecution.findMany({ where: { importId } });
   const desc = plans.find((p) => p.fixType === "product_seo_description");
-  await approvePlans({ ...base, importId, items: [{ planId: desc.id, value: "A blue cotton shirt, machine washable, in five sizes.", seenBefore: null }] });
+  await approvePlans({ ...base, importId, items: [{ planId: desc.id, seenRevision: desc.revision, value: "A blue cotton shirt, machine washable, in five sizes.", seenBefore: null }] });
   await executePlans({ ...base, importId, planIds: [desc.id], sleep: async () => {} });
+  // An AI suggestion for the remaining alt-text change, as stored by the AI service.
+  const alt = plans.find((p) => p.fixType === "product_image_alt");
+  await testDb.db.aiSuggestion.create({
+    data: {
+      shop: fake.session.shop, importId, findingKey: alt.findingKey, executionId: alt.id, kind: "value",
+      provider: "gemini", model: "gemini-test", promptVersion: "t", status: "VALID",
+      outputJson: JSON.stringify({ findingId: alt.findingKey, category: "seo", evidenceRefs: ["S1", "S3"], likelyRootCause: "No alt text set.", confidence: 0.7, uncertainties: ["Theme images may also lack alt"], recommendedAction: "Add alt text", proposedValue: "Blue cotton shirt", patchCandidate: null, requiredResourceType: "MediaImage", validationRequirements: [], risk: "low", automationSuggested: true, manualReviewReason: null }),
+    },
+  });
 });
 afterAll(async () => testDb.cleanup());
 
@@ -64,6 +73,11 @@ describe("pages render with real data", () => {
     const html = await render(await import("../app/routes/app.audits._index.jsx"), "/app/audits", "/app/audits");
     expect(html).toContain("example-store.com");
     expect(html).toContain("Store matched");
+    expect(html).toContain("Run audit now");
+    expect(html).toContain("Storefront password (only if your store is password protected)");
+    expect(html).toContain('type="password"');
+    expect(html).toContain("Theme to apply theme fixes to");
+    expect(html).toContain("Import a report file (optional)");
   });
 
   it("fix dashboard escapes untrusted evidence", async () => {
@@ -71,7 +85,15 @@ describe("pages render with real data", () => {
     expect(html).toContain("Findings by severity");
     expect(html).toContain("Shopify Theme");
     expect(html).toContain("Requires Manual Review");
+    expect(html).toContain("AI suggestions are off"); // no GEMINI_API_KEY in tests: everything else still works
     expect(html).toContain("Shopify Admin data (live)");
+    expect(html).toContain("Source, integrity and limitations");
+    // The theme is asked once at the top, never per finding.
+    expect(html.match(/Which theme should theme fixes go to?/g)).toHaveLength(1);
+    expect(html).not.toContain('aria-label="Theme to patch"');
+    expect(html).toContain("Choose the theme to fix at the top of this page first.");
+    expect(html).toContain("Prepare all fixable issues");
+    expect(html).toContain("Admin API fix (after resource check and approval)");
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });
@@ -79,6 +101,14 @@ describe("pages render with real data", () => {
   it("review screen shows before and proposed values", async () => {
     const html = await render(await import("../app/routes/app.audits.$importId_.review.jsx"), `/app/audits/${importId}/review`, "/app/audits/:importId/review");
     expect(html).toContain("Review proposed changes");
+    expect(html).toContain("AI recommendation (gemini-test), advisory only");
+    expect(html).toContain("Uncertainties: ");
+    expect(html).toContain("based on evidence S1, S3");
+    expect(html).toContain("Use this suggestion");
+    expect(html).toContain("Reject fix");
+    expect(html).toContain("Mark for manual review");
+    expect(html).toContain("Awaiting Approval");
+    expect(html).toContain("Completed");
     expect(html).toContain("Proposed <!-- -->Alt text");
     expect(html).toContain("Verification Passed");
     expect(html).toContain("takes effect on your live storefront immediately");

@@ -26,12 +26,15 @@ export const DISPLAY_CATEGORIES = {
   images: "Images and Alt Text",
   theme: "Shopify Theme",
   trust: "Trust and Conversion",
+  catalog: "Products and Collections",
 };
 
 export function displayCategoryFor(auditId, auditCategory) {
-  if (auditId === "seo.img.alt-missing" || auditId === "a11y.image-alt") {
+  if (auditId === "seo.img.alt-missing" || auditId === "a11y.image-alt" || auditId === "admin.media.alt-missing") {
     return "images";
   }
+  if (auditId === "admin.collection-image.alt-missing") return "images";
+  if (auditId.startsWith("catalog.")) return "catalog";
   if (auditId.startsWith("js.") || auditId.startsWith("code.")) return "code";
   if (auditId.startsWith("fonts.")) return "performance";
   if (auditCategory === "shopify") return "theme";
@@ -53,6 +56,7 @@ export const EXEC = {
   FAILED: "FAILED",
   SKIPPED: "SKIPPED",
   STALE: "STALE",
+  MANUAL_REVIEW: "MANUAL_REVIEW",
 };
 
 // Verification is tracked separately from execution: a successful mutation
@@ -66,15 +70,55 @@ export const VERIFY = {
   MANUAL_REQUIRED: "MANUAL_REQUIRED",
 };
 
+// Merchant-facing names. An applied change is only called "Completed" once
+// post-update verification has passed (see execLabel).
 export const EXEC_LABELS = {
-  NEEDS_REVIEW: "Needs Review",
+  NEEDS_REVIEW: "Awaiting Approval",
   APPROVED: "Approved",
-  APPLYING: "Applying",
+  APPLYING: "Executing",
   APPLIED: "Applied",
   FAILED: "Failed",
-  SKIPPED: "Skipped",
-  STALE: "Changed since review",
+  SKIPPED: "Rejected",
+  STALE: "Conflict Detected",
+  MANUAL_REVIEW: "Manual Review Required",
 };
+
+export function execLabel(status, verificationStatus) {
+  if (status === EXEC.APPLIED) {
+    return verificationStatus === VERIFY.PASSED ? "Completed" : "Applied, not verified";
+  }
+  return EXEC_LABELS[status] || status;
+}
+
+// Proposal lifecycle names used in docs, history filters and exports. "draft"
+// is an AI suggestion that has not been copied into a change (AiSuggestion);
+// "verification_pending" covers applied changes whose read-back is not done.
+export function proposalState(status, verificationStatus) {
+  switch (status) {
+    case EXEC.NEEDS_REVIEW:
+      return "pending_review";
+    case EXEC.APPROVED:
+      return "approved";
+    case EXEC.APPLYING:
+      return "executing";
+    case EXEC.APPLIED:
+      return verificationStatus === VERIFY.PASSED
+        ? "verified"
+        : verificationStatus === VERIFY.FAILED
+          ? "verification_failed"
+          : "verification_pending";
+    case EXEC.SKIPPED:
+      return "rejected";
+    case EXEC.STALE:
+      return "stale";
+    case EXEC.FAILED:
+      return "failed";
+    case EXEC.MANUAL_REVIEW:
+      return "manual_review";
+    default:
+      return "unknown";
+  }
+}
 
 export const VERIFY_LABELS = {
   NOT_STARTED: "Not verified",
@@ -94,10 +138,12 @@ export const SEVERITY_TONE = {
 
 export const RISK_TONE = { low: "success", medium: "caution", high: "critical" };
 
-export function execTone(status) {
+export function execTone(status, verificationStatus) {
   switch (status) {
     case EXEC.APPLIED:
-      return "success";
+      return verificationStatus === VERIFY.PASSED ? "success" : "warning";
+    case EXEC.MANUAL_REVIEW:
+      return "caution";
     case EXEC.FAILED:
       return "critical";
     case EXEC.STALE:
@@ -152,6 +198,7 @@ export function findingStatus({ supported, canModify, plans, manualReview = fals
   if (has((p) => p.status === EXEC.APPLIED && p.verificationStatus === VERIFY.FAILED)) {
     return FINDING_STATUS.VERIFY_FAILED;
   }
+  if (has((p) => p.status === EXEC.MANUAL_REVIEW)) return FINDING_STATUS.MANUAL_REVIEW;
   if (has((p) => p.status === EXEC.NEEDS_REVIEW || p.status === EXEC.STALE)) {
     return FINDING_STATUS.NEEDS_REVIEW;
   }
@@ -163,6 +210,16 @@ export function findingStatus({ supported, canModify, plans, manualReview = fals
   if (applied.length) return FINDING_STATUS.APPLIED;
   return FINDING_STATUS.SKIPPED;
 }
+
+// The five action classes every imported finding falls into. Imported findings
+// never start with execution authorization, whatever their class.
+export const ACTION_CLASSES = {
+  admin_api: "Admin API fix (after resource check and approval)",
+  needs_evidence: "Needs more evidence",
+  theme_patch: "Theme patch candidate (preview)",
+  manual: "Manual recommendation",
+  unsupported: "Unsupported",
+};
 
 // What a change touches. Admin changes are shared data and are live immediately;
 // they are never isolated by choosing a draft theme.

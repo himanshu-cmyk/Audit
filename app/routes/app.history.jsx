@@ -7,7 +7,7 @@ import { toActionError } from "../fixes/http.server";
 import { liveCheckPlan } from "../fixes/liveCheck.server";
 import { CHANGE_SCOPES, FIX_TYPES } from "../fixes/registry.server";
 import { prepareRollback, retryPlan, reverifyPlan, reversibility, serializePlan } from "../fixes/service.server";
-import { PlanBadges, ValueText, beforeValueOf, flag, fmtDate, inputStyle } from "../fixes/ui";
+import { PlanBadges, ValueText, beforeValueOf, flag, fmtDate, inputStyle, valueSourceLabel } from "../fixes/ui";
 
 const FILTERS = {
   all: { label: "All", where: {} },
@@ -15,8 +15,9 @@ const FILTERS = {
   verified: { label: "Verification passed", where: { verificationStatus: VERIFY.PASSED } },
   verifyFailed: { label: "Verification failed", where: { verificationStatus: VERIFY.FAILED } },
   failed: { label: "Failed", where: { status: EXEC.FAILED } },
-  stale: { label: "Changed since review", where: { status: EXEC.STALE } },
-  skipped: { label: "Skipped", where: { status: EXEC.SKIPPED } },
+  stale: { label: "Conflict detected", where: { status: EXEC.STALE } },
+  manualReview: { label: "Manual review required", where: { status: EXEC.MANUAL_REVIEW } },
+  skipped: { label: "Rejected", where: { status: EXEC.SKIPPED } },
 };
 const STUCK_MS = 10 * 60 * 1000;
 
@@ -59,6 +60,7 @@ export const loader = async ({ request }) => {
         canRetry:
           r.status === EXEC.FAILED ||
           r.status === EXEC.STALE ||
+          r.status === EXEC.MANUAL_REVIEW ||
           stuck ||
           (r.status === EXEC.APPLIED && [VERIFY.FAILED, VERIFY.UNAVAILABLE].includes(r.verificationStatus)),
         canReverify: r.status === EXEC.APPLIED && r.verificationStatus !== VERIFY.PASSED,
@@ -75,8 +77,11 @@ export const action = async ({ request }) => {
   const planId = String(form.get("planId") || "");
   try {
     if (intent === "retry") {
-      const importId = await retryPlan({ db, admin, session, planId });
-      return redirect(`/app/audits/${importId}/review`);
+      const r = await retryPlan({ db, admin, session, planId });
+      if (r.reconciled) {
+        return { ok: true, message: "Shopify already has the approved value. The change was recorded as applied and verified by read-back; nothing was sent." };
+      }
+      return redirect(`/app/audits/${r.importId}/review`);
     }
     if (intent === "rollback") {
       // Creates a restore as a new change; nothing is written until it is approved and confirmed.
@@ -173,6 +178,9 @@ export default function ExecutionHistory() {
                       <s-stack direction="block" gap="small-300">
                         <PlanBadges plan={p} />
                         {p.status === EXEC.SKIPPED && <s-text color="subdued">{EXEC_LABELS.SKIPPED} by you</s-text>}
+                        {valueSourceLabel(p.approved?.source) && (
+                          <s-text color="subdued">Value source: {valueSourceLabel(p.approved.source)}</s-text>
+                        )}
                         {p.verification?.message && <s-text>{p.verification.message}</s-text>}
                         {p.liveCheck?.message && (
                           <s-text color="subdued">

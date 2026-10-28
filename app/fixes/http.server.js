@@ -1,10 +1,11 @@
 import { FixError } from "./graphql.server";
 import { ImportError } from "./importer.server";
+import { AiError } from "../ai/errors.server";
 
 // Converts known, merchant-safe errors into action data. Anything else
 // (including thrown Responses used for re-authentication) propagates.
 export function toActionError(err) {
-  if (err instanceof FixError || err instanceof ImportError) {
+  if (err instanceof FixError || err instanceof ImportError || err instanceof AiError) {
     const details = Array.isArray(err.details) ? err.details.filter((d) => typeof d === "string") : [];
     return { ok: false, error: err.message, details };
   }

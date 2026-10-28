@@ -60,8 +60,8 @@ function reviewed(plan, value) {
   const def = getFixType(plan.fixType);
   const before = JSON.parse(plan.beforeJson);
   const proposed = JSON.parse(plan.proposedJson);
-  if (plan.executionKind === "theme" || plan.rollbackOfId) return { planId: plan.id, seenProposed: proposed.value };
-  return { planId: plan.id, seenBefore: def.handler.beforeValue(before), value };
+  if (plan.executionKind === "theme" || plan.rollbackOfId) return { planId: plan.id, seenRevision: plan.revision, seenProposed: proposed.value };
+  return { planId: plan.id, seenRevision: plan.revision, seenBefore: def.handler.beforeValue(before), value };
 }
 
 async function importFindings(findings, host = HOST) {
@@ -216,8 +216,8 @@ describe("product SEO end to end", () => {
 
 describe("collection SEO", () => {
   it("applies a collection SEO description through collectionUpdate", async () => {
-    const col = fake.api.addCollection({ title: "All products", handle: "all", description: "" });
-    const { imp, plans } = await preparedPlan("seo.meta-description.missing", [`https://${HOST}/collections/all`]);
+    const col = fake.api.addCollection({ title: "All juices", handle: "juices", description: "" });
+    const { imp, plans } = await preparedPlan("seo.meta-description.missing", [`https://${HOST}/collections/juices`]);
     expect(plans[0].resourceType).toBe("Collection");
     const { exec } = await approveAndExecute(imp, plans[0], "Every juice, oil and wellness product from Example Store, in one place.");
     expect(exec.results[0].verificationStatus).toBe(VERIFY.PASSED);
@@ -317,9 +317,9 @@ describe("stale state and verification", () => {
 
   it("refuses an approval based on an outdated review screen", async () => {
     const { imp, plans } = await preparedPlan();
-    const res = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, value: VALUE, seenBefore: "something else" }] });
+    const res = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, seenRevision: plans[0].revision, value: VALUE, seenBefore: "something else" }] });
     expect(res[0]).toMatchObject({ ok: false, code: "REVIEW_OUTDATED" });
-    const missing = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, value: VALUE }] });
+    const missing = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, seenRevision: plans[0].revision, value: VALUE }] });
     expect(missing[0]).toMatchObject({ ok: false, code: "REVIEW_OUTDATED" });
   });
 
@@ -423,7 +423,7 @@ describe("approval, idempotency and server-side policy", () => {
   it("rejects an unsupported fix type even if it reaches the database", async () => {
     const { imp, plans } = await preparedPlan();
     await db.fixExecution.update({ where: { id: plans[0].id }, data: { fixType: "run_shell_command" } });
-    const res = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, value: "x", seenBefore: null }] });
+    const res = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, seenRevision: plans[0].revision, value: "x", seenBefore: null }] });
     expect(res[0]).toMatchObject({ ok: false, code: "UNSUPPORTED_FIX_TYPE" });
     await db.fixExecution.update({ where: { id: plans[0].id }, data: { status: EXEC.APPROVED, approvedJson: JSON.stringify({ before: {}, value: "x" }) } });
     const { results } = await executePlans({ ...base(), importId: imp.id, planIds: [plans[0].id], sleep: noSleep });
@@ -582,7 +582,7 @@ describe("theme fixes", () => {
   it("requires approval of the exact patch that was shown", async () => {
     const imp = await themeImport("seo.lang.missing");
     const { plans } = await planOf(imp, "seo.lang.missing");
-    const res = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, seenProposed: "0".repeat(64) }], ...ENABLED });
+    const res = await approvePlans({ ...base(), importId: imp.id, items: [{ planId: plans[0].id, seenRevision: plans[0].revision, seenProposed: "0".repeat(64) }], ...ENABLED });
     expect(res[0]).toMatchObject({ ok: false, code: "REVIEW_OUTDATED" });
   });
 
@@ -658,6 +658,34 @@ describe("theme fixes", () => {
     const { results } = await executePlans({ ...base(), importId: imp.id, planIds: [plans[0].id], sleep: noSleep, ...ENABLED });
     expect(results[0].status).toBe(EXEC.STALE);
     expect(fake.state.calls.some((c) => c.name === "StoreAuditThemeFilesUpsert")).toBe(false);
+  });
+
+  it("refuses at execution time when the approved theme was published in the meantime", async () => {
+    const imp = await themeImport("seo.lang.missing");
+    const { plans } = await planOf(imp, "seo.lang.missing");
+    expect((await approvePlans({ ...base(), importId: imp.id, items: [reviewed(plans[0])], ...ENABLED }))[0].ok).toBe(true);
+    live.role = "UNPUBLISHED";
+    draft.role = "MAIN";
+    const { results } = await executePlans({ ...base(), importId: imp.id, planIds: [plans[0].id], sleep: noSleep, ...ENABLED });
+    expect(results[0].ok).toBe(false);
+    expect(fake.state.calls.some((c) => c.name === "StoreAuditThemeFilesUpsert")).toBe(false);
+    expect(draft.files["layout/theme.liquid"]).toBe(LAYOUT);
+  });
+
+  it("does not write the theme file when the backup cannot be saved", async () => {
+    const imp = await themeImport("seo.lang.missing");
+    const { plans } = await planOf(imp, "seo.lang.missing");
+    await approvePlans({ ...base(), importId: imp.id, items: [reviewed(plans[0])], ...ENABLED });
+    const failingBackups = new Proxy(db, {
+      get: (target, prop) =>
+        prop === "themeFileBackup"
+          ? { ...target.themeFileBackup, findFirst: (a) => target.themeFileBackup.findFirst(a), create: async () => { throw new Error("disk full"); } }
+          : target[prop],
+    });
+    const { results } = await executePlans({ ...base(), db: failingBackups, importId: imp.id, planIds: [plans[0].id], sleep: noSleep, ...ENABLED });
+    expect(results[0]).toMatchObject({ ok: false, status: EXEC.FAILED });
+    expect(fake.state.calls.some((c) => c.name === "StoreAuditThemeFilesUpsert")).toBe(false);
+    expect(draft.files["layout/theme.liquid"]).toBe(LAYOUT);
   });
 });
 

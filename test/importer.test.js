@@ -70,10 +70,14 @@ describe("audit import: invalid files are rejected", () => {
     expect(err.details.join("\n")).toMatch(/unsupported category/);
   });
 
-  it("rejects duplicate finding ids", () => {
+  it("drops exact duplicate findings and flags conflicting ones", () => {
     const f = finding("seo.og.missing", "seo", []);
-    const err = expectImportError(auditJson({ findings: [f, f] }), "failed validation");
-    expect(err.details[0]).toMatch(/duplicate id/);
+    const exact = parseAuditFile(auditJson({ findings: [f, f] }));
+    expect(exact.findings).toHaveLength(1);
+    expect(exact.warnings.join()).toMatch(/exact duplicate removed/);
+    const conflicting = parseAuditFile(auditJson({ findings: [f, { ...f, severity: "critical" }] }));
+    expect(conflicting.findings).toHaveLength(1);
+    expect(conflicting.findings[0].conflict).toBe(true);
   });
 
   it("rejects affectedUrls that are not arrays", () => {

@@ -14,21 +14,21 @@ datasource db {
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
@@ -53,10 +53,22 @@ model AuditImport {
   storeMatchNote     String?
   storeConfirmedAt   DateTime?
   storeConfirmedHost String?
+  // Internal report contract (app/fixes/reportContract.server.js). Null for
+  // imports made before contract version 1.
+  contractVersion     Int?
+  sourceSchemaVersion Int?
+  rawSha256           String?
+  contentDigest       String?
+  sourceGeneratedAt   DateTime?
+  reportJson          String?
+  // Unpublished/development theme chosen once for this audit's theme fixes.
+  themeId             String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   fixes              FixExecution[]
 
+  // Re-importing identical content in the same shop returns the existing import.
+  @@unique([shop, contentDigest])
   @@index([shop, createdAt])
 }
 
@@ -77,6 +89,8 @@ model FixExecution {
   dedupeKey          String
   // Set when this change restores the previous state of another change.
   rollbackOfId       String?
+  // Incremented on every review-relevant change. An approval binds one revision.
+  revision           Int         @default(1)
   beforeJson         String
   proposedJson       String
   approvedJson       String?
@@ -112,4 +126,29 @@ model ThemeFileBackup {
   createdAt     DateTime @default(now())
 
   @@index([shop, executionId])
+}
+
+// An AI recommendation or analysis. Advisory only: it is never executed. A
+// merchant may copy a VALID proposedValue into a change, which is then approved
+// and applied through the normal FixExecution workflow.
+model AiSuggestion {
+  id             String   @id @default(cuid())
+  shop           String
+  importId       String
+  findingKey     String
+  executionId    String?
+  kind           String
+  provider       String
+  model          String
+  promptVersion  String
+  status         String
+  outputJson     String?
+  validationJson String?
+  errorCode      String?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, executionId])
+  @@index([shop, importId, findingKey])
 }

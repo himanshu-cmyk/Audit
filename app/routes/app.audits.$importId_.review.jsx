@@ -12,11 +12,15 @@ import {
   batchToken,
   executePlans,
   loadImport,
+  markManualReview,
   serializePlan,
   skipPlan,
   unapprovePlan,
 } from "../fixes/service.server";
-import { DiffView, PlanBadges, ValueText, beforeValueOf, flag, fmtDate, inputStyle } from "../fixes/ui";
+import { aiStatus } from "../ai/config.server";
+import { getAiProvider } from "../ai/provider.server";
+import { aiAssistImport, aiAssistMessage, latestSuggestions, suggestForPlan } from "../ai/suggest.server";
+import { AiPanel, DiffView, PlanBadges, ValueText, beforeValueOf, flag, fmtDate, inputStyle } from "../fixes/ui";
 
 export const loader = async ({ request, params }) => {
   const { session } = await authenticate.admin(request);
@@ -43,10 +47,13 @@ export const loader = async ({ request, params }) => {
   });
   // Identifies the exact set of approved changes shown in the confirmation step.
   const approvedRows = rows.filter((r) => r.status === EXEC.APPROVED);
+  const suggestions = await latestSuggestions(db, session.shop, { importId: imp.id, kind: "value" }, (r) => r.executionId);
   return {
     audit: { id: imp.id, auditedHost: imp.auditedHost },
     shop: session.shop,
     plans,
+    ai: aiStatus(),
+    suggestions,
     batchToken: approvedRows.length ? batchToken(approvedRows) : null,
   };
 };
@@ -65,9 +72,11 @@ export const action = async ({ request, params }) => {
         .filter((i) => i && typeof i.planId === "string")
         .map((i) => ({
           planId: i.planId,
+          seenRevision: Number.isInteger(i.seenRevision) ? i.seenRevision : undefined,
           value: str(i.value),
           seenBefore: i.seenBefore === null ? null : str(i.seenBefore),
           seenProposed: str(i.seenProposed),
+          ...(typeof i.aiSuggestionId === "string" ? { aiSuggestionId: i.aiSuggestionId } : {}),
         }));
       const results = await approvePlans({ db, admin, session, importId: params.importId, items: clean });
       const okCount = results.filter((r) => r.ok).length;
@@ -98,11 +107,34 @@ export const action = async ({ request, params }) => {
         ...(sessionExpired ? { error: "Your session expired. Reload the app; remaining changes are still approved." } : {}),
       };
     }
-    if (intent === "unapprove" || intent === "skip") {
+    if (intent === "aiSuggestAll") {
+      // Advisory only: drafts values for changes awaiting review; nothing is approved.
+      const r = await aiAssistImport({ db, admin, session, importId: params.importId, provider: getAiProvider(), explain: false });
+      return { ok: !r.failed, intent, message: aiAssistMessage(r) };
+    }
+    if (intent === "aiSuggest") {
+      // Advisory only: stores a suggestion; never changes the store or the plan.
+      const planId = String(form.get("planId") || "");
+      const s = await suggestForPlan({ db, admin, session, planId, provider: getAiProvider() });
+      return {
+        ok: s.status === "VALID",
+        intent,
+        planId,
+        message:
+          s.status === "VALID"
+            ? "AI suggestion ready. Review it, then use or edit it before approving."
+            : s.status === "INVALID"
+              ? "The AI suggestion failed validation and cannot be used. You can still edit the proposal yourself."
+              : s.errorMessage,
+      };
+    }
+    if (intent === "unapprove" || intent === "skip" || intent === "manualReview") {
       const planId = String(form.get("planId") || "");
       if (intent === "unapprove") await unapprovePlan({ db, session, planId });
-      else await skipPlan({ db, session, planId });
-      return { ok: true, intent, message: intent === "skip" ? "Change skipped." : "Change returned to review." };
+      else if (intent === "skip") await skipPlan({ db, session, planId });
+      else await markManualReview({ db, session, planId, note: String(form.get("note") || "") });
+      const messages = { skip: "Fix rejected.", unapprove: "Change returned to review.", manualReview: "Marked for manual review." };
+      return { ok: true, intent, message: messages[intent] };
     }
     return { ok: false, error: "Unknown action." };
   } catch (err) {
@@ -127,7 +159,7 @@ function ResultList({ results, plans }) {
 }
 
 export default function ReviewFixes() {
-  const { audit, shop, plans, batchToken } = useLoaderData();
+  const { audit, shop, plans, batchToken, ai, suggestions } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -136,13 +168,16 @@ export default function ReviewFixes() {
   const review = plans.filter((p) => p.status === EXEC.NEEDS_REVIEW || p.status === EXEC.STALE);
   const approved = plans.filter((p) => p.status === EXEC.APPROVED);
   const applying = plans.filter((p) => p.status === EXEC.APPLYING);
-  const done = plans.filter((p) => [EXEC.APPLIED, EXEC.FAILED, EXEC.SKIPPED].includes(p.status));
+  const done = plans.filter((p) => [EXEC.APPLIED, EXEC.FAILED, EXEC.SKIPPED, EXEC.MANUAL_REVIEW].includes(p.status));
 
   const [values, setValues] = useState(() =>
     Object.fromEntries(review.map((p) => [p.id, p.proposed?.value ?? ""])),
   );
   const [selected, setSelected] = useState({});
   const [confirming, setConfirming] = useState(false);
+  // Which AI suggestion (if any) the merchant copied into each editor; sent with
+  // the approval so the audit trail records AI vs edited vs typed values.
+  const [aiSource, setAiSource] = useState({});
 
   // Keep edited values for plans that are still in review after a reload.
   useEffect(() => {
@@ -172,8 +207,14 @@ export default function ReviewFixes() {
     const items = selectedIds.map((id) => {
       const p = plans.find((x) => x.id === id);
       return serverValue(p)
-        ? { planId: id, seenProposed: p.proposed.value }
-        : { planId: id, value: values[id], seenBefore: beforeValueOf(p) ?? null };
+        ? { planId: id, seenRevision: p.revision, seenProposed: p.proposed.value }
+        : {
+            planId: id,
+            seenRevision: p.revision,
+            value: values[id],
+            seenBefore: beforeValueOf(p) ?? null,
+            ...(aiSource[id] ? { aiSuggestionId: aiSource[id] } : {}),
+          };
     });
     submit({ intent: "approve", items: JSON.stringify(items) }, { method: "post" });
   };
@@ -217,10 +258,16 @@ export default function ReviewFixes() {
         ) : (
           <s-stack direction="block" gap="base">
             <s-paragraph>
-              Check the current value and edit the proposed value for each change. Suggestions are based only on
-              your existing product or collection data. Select the changes you want, then approve them. Nothing is
-              changed in your store at this step.
+              Check the current value and edit the proposed value for each change. The starting proposal is built
+              only from your existing product or collection data. You can also ask AI for a suggestion; it is
+              advisory, it is validated before you can use it, and you can edit it. Select the changes you want,
+              then approve them. Nothing is changed in your store at this step.
             </s-paragraph>
+            {ai.enabled && review.some((p) => p.field && !p.rollbackOfId && !suggestions[p.id]) && (
+              <s-button variant="secondary" onClick={() => submit({ intent: "aiSuggestAll" }, { method: "post" })} {...flag("disabled", busy)}>
+                Get AI suggestions for all changes
+              </s-button>
+            )}
             <label>
               <input
                 type="checkbox"
@@ -291,8 +338,13 @@ export default function ReviewFixes() {
                         ) : (
                         <s-stack direction="block" gap="small-200">
                           <label htmlFor={`v-${p.id}`}>
-                            <s-text type="strong">Proposed {p.field?.label}</s-text>
+                            <s-text type="strong">Proposed {p.field?.label} (editable; becomes the fix once you approve)</s-text>
                           </label>
+                          {aiSource[p.id] && (
+                            <s-badge tone="info">
+                              {values[p.id] === suggestions[p.id]?.output?.proposedValue ? "From AI suggestion" : "From AI suggestion, edited"}
+                            </s-badge>
+                          )}
                           <textarea
                             id={`v-${p.id}`}
                             rows={p.fixType.endsWith("_description") ? 4 : 2}
@@ -311,9 +363,28 @@ export default function ReviewFixes() {
                         )}
                       </s-grid>
                     )}
-                    <s-stack direction="inline" gap="small">
-                      <s-button variant="tertiary" onClick={() => simple("skip", p.id)} {...flag("disabled", busy)}>
-                        Skip this change
+                    {p.field && !p.rollbackOfId && (
+                      <AiPanel
+                        suggestion={suggestions[p.id]}
+                        useDisabled={busy}
+                        onUse={() => {
+                          setValues((v) => ({ ...v, [p.id]: suggestions[p.id].output.proposedValue }));
+                          setAiSource((a) => ({ ...a, [p.id]: suggestions[p.id].id }));
+                        }}
+                      />
+                    )}
+                    <s-stack direction="inline" gap="small" alignItems="center">
+                      {p.field && !p.rollbackOfId && ai.enabled && (
+                        <s-button variant="secondary" onClick={() => simple("aiSuggest", p.id)} {...flag("disabled", busy)}>
+                          {suggestions[p.id] ? "Request a new AI suggestion" : "Get AI suggestion"}
+                        </s-button>
+                      )}
+                      {p.field && !p.rollbackOfId && !ai.enabled && <s-text color="subdued">{ai.reason}</s-text>}
+                      <s-button variant="tertiary" onClick={() => simple("manualReview", p.id)} {...flag("disabled", busy)}>
+                        Mark for manual review
+                      </s-button>
+                      <s-button variant="tertiary" tone="critical" onClick={() => simple("skip", p.id)} {...flag("disabled", busy)}>
+                        Reject fix
                       </s-button>
                     </s-stack>
                   </s-stack>

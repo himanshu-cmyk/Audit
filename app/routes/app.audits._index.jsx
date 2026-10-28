@@ -3,13 +3,21 @@ import { useActionData, useLoaderData, useNavigation, useSubmit } from "react-ro
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { createImport } from "../fixes/service.server";
+import { createImport, createInAppAudit } from "../fixes/service.server";
+import { FixError } from "../fixes/graphql.server";
+import { listThemes } from "../fixes/handlers/theme.server";
 import { toActionError } from "../fixes/http.server";
 import { MAX_IMPORT_BYTES, STORE_MATCH } from "../fixes/constants";
-import { flag, fmtDate } from "../fixes/ui";
+import { flag, fmtDate, inputStyle } from "../fixes/ui";
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  let themes = [];
+  try {
+    themes = (await listThemes(admin)).filter((t) => t.writable);
+  } catch (err) {
+    if (!(err instanceof FixError)) throw err;
+  }
   const imports = await db.auditImport.findMany({
     where: { shop: session.shop },
     orderBy: { createdAt: "desc" },
@@ -29,11 +37,29 @@ export const loader = async ({ request }) => {
       _count: { select: { fixes: true } },
     },
   });
-  return { imports };
+  return { imports, themes };
 };
 
 export const action = async ({ request }) => {
   const { admin, session, redirect } = await authenticate.admin(request);
+  if (new URL(request.url).searchParams.get("run") === "1") {
+    // Runs the in-app audit. It only reads the store.
+    const form = await request.formData();
+    try {
+      const themeId = form.get("themeId");
+      const imp = await createInAppAudit({
+        db,
+        admin,
+        session,
+        includeStorefront: form.get("includeStorefront") === "yes",
+        storefrontPassword: typeof form.get("storefrontPassword") === "string" ? form.get("storefrontPassword") : null,
+        themeId: typeof themeId === "string" && themeId ? themeId : null,
+      });
+      return redirect(`/app/audits/${imp.id}`);
+    } catch (err) {
+      return { ...toActionError(err), source: "run" };
+    }
+  }
   const declared = Number(request.headers.get("content-length") || 0);
   if (declared > MAX_IMPORT_BYTES + 64 * 1024) {
     return { ok: false, error: "The file is larger than the 5 MB limit." };
@@ -49,7 +75,8 @@ export const action = async ({ request }) => {
   try {
     // Importing only records and validates the findings. It never changes the store.
     const imp = await createImport({ db, admin, session, text: await file.text(), fileName: file.name });
-    return redirect(`/app/audits/${imp.id}`);
+    // Identical content already imported in this shop: open that import instead.
+    return redirect(`/app/audits/${imp.id}${imp.duplicate ? "?existing=1" : ""}`);
   } catch (err) {
     return toActionError(err);
   }
@@ -65,7 +92,15 @@ function matchBadge(imp) {
 }
 
 export default function AuditResults() {
-  const { imports } = useLoaderData();
+  const { imports, themes } = useLoaderData();
+  const [themeId, setThemeId] = useState(themes[0]?.id || "");
+  const [includeStorefront, setIncludeStorefront] = useState(true);
+  const [storefrontPassword, setStorefrontPassword] = useState("");
+  const runAudit = () =>
+    submit(
+      { themeId, includeStorefront: includeStorefront ? "yes" : "no", storefrontPassword: includeStorefront ? storefrontPassword : "" },
+      { method: "post", action: "?index&run=1" },
+    );
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -90,17 +125,67 @@ export default function AuditResults() {
     submit(fd, { method: "post", encType: "multipart/form-data" });
   };
 
-  const error = localError || (actionData && !actionData.ok ? actionData.error : null);
+  const error = localError || (actionData && !actionData.ok && actionData.source !== "run" ? actionData.error : null);
 
   return (
     <s-page heading="Audit results">
-      <s-section heading="Import an audit result">
+      <s-section heading="Audit this store">
         <s-stack direction="block" gap="base">
           <s-paragraph>
-            Upload the <s-text type="strong">approved-fixes.json</s-text> downloaded from your audit report, or the
-            JSON file written by the audit tool&apos;s <s-text type="strong">--json</s-text> option. Importing only
-            records the findings for review. Nothing in your store changes until you approve and confirm specific
-            fixes.
+            The app checks your products, collections and product images in Shopify Admin, your published
+            theme, and (optionally) a few public storefront pages. The audit only reads your store; nothing
+            changes until you review, approve and confirm specific fixes.
+          </s-paragraph>
+          {actionData?.source === "run" && actionData.error && <s-banner tone="critical" heading={actionData.error} />}
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 420 }}>
+            <s-text type="strong">Theme to apply theme fixes to</s-text>
+            <select style={inputStyle} value={themeId} onChange={(e) => setThemeId(e.target.value)}>
+              {themes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.role.toLowerCase()})
+                </option>
+              ))}
+              <option value="">Decide later</option>
+            </select>
+            <s-text color="subdued">
+              {themes.length
+                ? "Only unpublished or development themes are listed. The live theme is never edited; Admin fixes (SEO, alt text) do not depend on this choice."
+                : "No unpublished theme found. Duplicate your live theme in Online Store > Themes to get theme fixes; Admin fixes work without it."}
+            </s-text>
+          </label>
+          <label>
+            <input type="checkbox" checked={includeStorefront} onChange={(e) => setIncludeStorefront(e.target.checked)} /> Also check
+            public storefront pages
+          </label>
+          {includeStorefront && (
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 420 }}>
+              <s-text type="strong">Storefront password (only if your store is password protected)</s-text>
+              <input
+                type="password"
+                autoComplete="off"
+                style={inputStyle}
+                value={storefrontPassword}
+                onChange={(e) => setStorefrontPassword(e.target.value)}
+              />
+              <s-text color="subdued">
+                Used for this audit only to open your storefront pages. It is never saved. Find it in Online Store &gt;
+                Preferences &gt; Password protection.
+              </s-text>
+            </label>
+          )}
+          <s-button variant="primary" onClick={runAudit} {...flag("loading", navigation.state === "submitting")}>
+            Run audit now
+          </s-button>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Import a report file (optional)">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            Upload the JSON report written by the audit tool (<s-text type="strong">schemaVersion 1</s-text>). Older
+            --json output and the report&apos;s approved-fixes.json are accepted as legacy formats. Importing only
+            records the findings for review: selections or flags in the file are never treated as approval, and nothing
+            in your store changes until you approve and confirm specific fixes here.
           </s-paragraph>
           {error && (
             <s-banner tone="critical" heading={error}>
@@ -151,7 +236,7 @@ export default function AuditResults() {
                   <s-table-cell>
                     <s-stack direction="block" gap="small-300">
                       <s-text type="strong">{imp.auditedHost || "Unknown domain"}</s-text>
-                      <s-text color="subdued">{imp.fileName || imp.sourceFormat}</s-text>
+                      <s-text color="subdued">{imp.sourceFormat === "in-app" ? "Audit run by this app" : imp.fileName || imp.sourceFormat}</s-text>
                     </s-stack>
                   </s-table-cell>
                   <s-table-cell>{fmtDate(imp.auditDate)}</s-table-cell>

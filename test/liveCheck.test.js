@@ -23,7 +23,7 @@ async function appliedPlan() {
   const imp = await createImport({ ...base, text: auditJson({ findings: [finding("seo.meta-description.missing", "seo", ["https://www.example-store.com/products/karela-jamun-juice"])] }) });
   await prepareFinding({ ...base, importId: imp.id, findingKey: "seo.meta-description.missing" });
   const [plan] = await db.fixExecution.findMany({ where: { importId: imp.id } });
-  await approvePlans({ ...base, importId: imp.id, items: [{ planId: plan.id, value: VALUE, seenBefore: null }] });
+  await approvePlans({ ...base, importId: imp.id, items: [{ planId: plan.id, seenRevision: plan.revision, value: VALUE, seenBefore: null }] });
   await executePlans({ ...base, importId: imp.id, planIds: [plan.id], sleep: async () => {} });
   expect((await db.fixExecution.findUnique({ where: { id: plan.id } })).status).toBe(EXEC.APPLIED);
   return { base, plan };
@@ -36,18 +36,18 @@ describe("storefront re-check", () => {
 
   it("fetches only the shop's own domain and reports a reflected change", async () => {
     const { base, plan } = await appliedPlan();
-    const fetchImpl = vi.fn(async () => new Response(`<html><head><title>Karela Jamun Juice – Example</title><meta name="description" content="${VALUE}"></head></html>`, { status: 200 }));
-    const r = await liveCheckPlan({ ...base, planId: plan.id, fetchImpl });
-    expect(fetchImpl.mock.calls[0][0]).toBe("https://www.example-store.com/products/karela-jamun-juice");
-    expect(fetchImpl.mock.calls[0][1].redirect).toBe("manual");
+    const fetchPage = vi.fn(async () => ({ status: 200, headers: {}, text: `<html><head><title>Karela Jamun Juice – Example</title><meta name="description" content="${VALUE}"></head></html>` }));
+    const r = await liveCheckPlan({ ...base, planId: plan.id, fetchPage });
+    expect(fetchPage.mock.calls[0][0]).toBe("https://www.example-store.com/products/karela-jamun-juice");
+    expect(fetchPage.mock.calls[0][1]).toMatchObject({ allowedHosts: ["www.example-store.com"], maxRedirects: 0, maxBytes: 2_000_000 });
     expect(r.status).toBe("REFLECTED");
     expect(r.detectorPasses).toBe(true);
   });
 
   it("reports password-protected storefronts as unavailable instead of passing", async () => {
     const { base, plan } = await appliedPlan();
-    const fetchImpl = async () => new Response(null, { status: 302, headers: { location: "https://www.example-store.com/password" } });
-    const r = await liveCheckPlan({ ...base, planId: plan.id, fetchImpl });
+    const fetchPage = async () => ({ status: 302, headers: { location: "https://www.example-store.com/password" }, text: "" });
+    const r = await liveCheckPlan({ ...base, planId: plan.id, fetchPage });
     expect(r.status).toBe("UNAVAILABLE");
     expect(r.message).toMatch(/password protected/);
   });

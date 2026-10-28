@@ -44,10 +44,23 @@ describe("store matching", () => {
 describe("storefront URL resolution", () => {
   const host = "www.acme.com";
   it("classifies product, collection and nested product URLs", () => {
-    expect(classifyStoreUrl("https://www.acme.com/products/blue-shirt", host)).toEqual({ kind: "product", handle: "blue-shirt" });
-    expect(classifyStoreUrl("https://acme.com/collections/summer/products/blue-shirt", host)).toEqual({ kind: "product", handle: "blue-shirt" });
-    expect(classifyStoreUrl("https://www.acme.com/collections/all", host)).toEqual({ kind: "collection", handle: "all" });
-    expect(classifyStoreUrl("https://www.acme.com/en-gb/products/blue-shirt?variant=1", host)).toEqual({ kind: "product", handle: "blue-shirt" });
+    expect(classifyStoreUrl("https://www.acme.com/products/blue-shirt", host)).toEqual({ kind: "product", handle: "blue-shirt", locale: null });
+    expect(classifyStoreUrl("https://acme.com/collections/summer/products/blue-shirt", host)).toEqual({ kind: "product", handle: "blue-shirt", locale: null, viaCollection: "summer" });
+    expect(classifyStoreUrl("https://www.acme.com/collections/summer", host)).toEqual({ kind: "collection", handle: "summer", locale: null });
+    expect(classifyStoreUrl("https://www.acme.com/en-gb/products/blue-shirt?variant=1", host)).toEqual({ kind: "product", handle: "blue-shirt", locale: "en-gb" });
+    expect(classifyStoreUrl("https://www.acme.com/fr/collections/summer/products/blue-shirt", host)).toMatchObject({ kind: "product", handle: "blue-shirt", locale: "fr" });
+  });
+  it("treats Shopify-generated listings, feeds and odd paths conservatively", () => {
+    for (const path of ["collections/all", "collections/vendors?q=Acme", "collections/types?q=Juice", "collections/ALL"]) {
+      expect(classifyStoreUrl(`https://www.acme.com/${path}`, host).kind).toBe("special");
+    }
+    // A product reached through /collections/all is still that product.
+    expect(classifyStoreUrl("https://www.acme.com/collections/all/products/blue-shirt", host)).toMatchObject({ kind: "product", handle: "blue-shirt" });
+    expect(classifyStoreUrl("https://www.acme.com/products/blue-shirt.json", host).kind).toBe("file");
+    expect(classifyStoreUrl("https://www.acme.com/collections/summer.atom", host).kind).toBe("file");
+    expect(classifyStoreUrl("https://www.acme.com/products/a/b", host).kind).toBe("ambiguous");
+    expect(classifyStoreUrl("https://www.acme.com/products", host).kind).toBe("ambiguous");
+    expect(classifyStoreUrl("https://www.acme.com/xx/pages/about", host).kind).toBe("page");
   });
   it("marks unsupported page types as manual and ignores other hosts", () => {
     expect(classifyStoreUrl("https://www.acme.com/", host).kind).toBe("home");

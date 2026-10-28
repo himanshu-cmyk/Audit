@@ -1,11 +1,13 @@
 // Optional post-fix storefront re-check for SEO changes: fetches the public page
 // and re-runs the same title / meta-description checks the audit's SEO detector
 // uses. The URL is built server-side from the shop's own primary domain and the
-// resource handle returned by the Admin API, never from user or audit input.
+// resource handle returned by the Admin API, never from user or audit input, and
+// fetched through safeFetchText (public addresses only, size and time bounded).
 
 import { EXEC } from "./constants";
 import { FixError } from "./graphql.server";
 import { isValidHandle } from "./resolve.server";
+import { safeFetchText } from "./safeFetch.server";
 import { fetchShopInfo } from "./storeMatch.server";
 import { cleanLine, normalizeHost, safeJsonParse } from "./text";
 
@@ -36,7 +38,7 @@ export function extractHeadSeo(html) {
   };
 }
 
-export async function liveCheckPlan({ db, admin, session, planId, fetchImpl = fetch }) {
+export async function liveCheckPlan({ db, admin, session, planId, fetchPage = safeFetchText }) {
   const plan = await db.fixExecution.findFirst({ where: { id: planId, shop: session.shop } });
   if (!plan) throw new FixError("NOT_FOUND", "Change not found.");
   const cfg = SEO_TYPES[plan.fixType];
@@ -48,28 +50,31 @@ export async function liveCheckPlan({ db, admin, session, planId, fetchImpl = fe
   if (!isValidHandle(before.handle)) throw new FixError("INVALID_STATE", "The resource handle is unknown.");
 
   const shopInfo = await fetchShopInfo(admin);
-  const host = normalizeHost(shopInfo.primaryDomainHost) ? shopInfo.primaryDomainHost : shopInfo.myshopifyDomain;
+  const host = (normalizeHost(shopInfo.primaryDomainHost) ? shopInfo.primaryDomainHost : shopInfo.myshopifyDomain).toLowerCase();
   const url = `https://${host}/${cfg.path}/${encodeURIComponent(before.handle)}`;
 
   let result;
   try {
-    const res = await fetchImpl(url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(8000),
+    // Redirects are not followed: a redirect means the page itself was not served.
+    const res = await fetchPage(url, {
+      allowedHosts: [host],
+      maxRedirects: 0,
+      timeoutMs: 8000,
+      maxBytes: 2_000_000,
       headers: { accept: "text/html", "user-agent": "StoreAudit-FixVerifier/1.0" },
     });
     if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location") || "";
+      const loc = res.headers.location || "";
       result = {
         status: "UNAVAILABLE",
         message: /\/password/.test(loc)
           ? "The storefront is password protected, so the public page cannot be checked."
           : "The storefront redirected the request, so the page could not be checked.",
       };
-    } else if (!res.ok) {
+    } else if (res.status < 200 || res.status >= 300) {
       result = { status: "UNAVAILABLE", message: `The storefront returned HTTP ${res.status}.` };
     } else {
-      const observed = extractHeadSeo((await res.text()).slice(0, 2_000_000));
+      const observed = extractHeadSeo(res.text);
       const value = observed[cfg.field];
       const reflected =
         cfg.field === "title" ? Boolean(value && value.includes(approved.value)) : value === approved.value;
