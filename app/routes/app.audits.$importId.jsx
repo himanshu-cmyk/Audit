@@ -31,6 +31,7 @@ import {
   loadImport,
   prepareAllFixable,
   prepareFinding,
+  prepareSummary,
   setImportTheme,
   serializePlan,
 } from "../fixes/service.server";
@@ -192,8 +193,13 @@ export const action = async ({ request, params }) => {
       }
       return {
         ok: true,
-        message: `${n} change${n === 1 ? "" : "s"} ready for review from ${r.findings} finding${r.findings === 1 ? "" : "s"}.${r.unchanged ? ` ${r.unchanged} already approved or applied were left as they are.` : ""}${aiNote} Review and approve them before anything is applied.`,
-        manual: [...r.skipped.map((x) => ({ url: null, reason: `${x.key}: ${x.reason}` })), ...r.manual],
+        message: `${n} change${n === 1 ? "" : "s"} ready for review from ${r.findings} finding${r.findings === 1 ? "" : "s"}.${r.unchanged ? ` ${r.unchanged} already approved or applied were left as they are.` : ""}${r.manual.length ? ` ${r.manual.length} need manual review.` : ""}${r.unresolved.length ? ` ${r.unresolved.length} not found in the store.` : ""}${r.failed.length ? ` ${r.failed.length} failed.` : ""}${aiNote} Review and approve them before anything is applied.`,
+        manual: [
+          ...r.skipped.map((x) => ({ url: null, reason: `${x.key}: ${x.reason}` })),
+          ...r.manual,
+          ...r.unresolved.map((m) => ({ ...m, reason: `Not found: ${m.reason}` })),
+          ...r.failed.map((m) => ({ ...m, reason: `Failed: ${m.reason}` })),
+        ],
       };
     }
     if (intent === "prepare") {
@@ -206,16 +212,27 @@ export const action = async ({ request, params }) => {
         acknowledgeUnconfirmed: form.get("acknowledgeUnconfirmed") === "yes",
       });
       const n = r.created + r.updated;
+      const findingKey = String(form.get("findingKey"));
+      let aiNote = "";
+      if (n > 0 && form.get("aiDraft") === "yes" && aiStatus().enabled) {
+        const a = await aiAssistImport({ db, admin, session, importId: params.importId, provider: getAiProvider(), explain: false, findingKey });
+        aiNote = ` ${aiAssistMessage(a)}`;
+      }
       return {
-        ok: true,
-        findingKey: String(form.get("findingKey")),
-        message:
+        ok: n > 0 || r.unchanged > 0,
+        findingKey,
+        message: `${prepareSummary(r)}. ${
           n > 0
             ? `${n} change${n === 1 ? "" : "s"} ready for review.${r.unchanged ? ` ${r.unchanged} already approved or applied were left as they are.` : ""}`
             : r.unchanged
               ? "All changes for this finding are already approved or applied."
-              : "No automatic changes could be prepared for this finding.",
-        manual: r.manual,
+              : "No change could be prepared; see the reasons below."
+        }${aiNote}`,
+        manual: [
+          ...r.manual,
+          ...r.unresolved.map((m) => ({ ...m, reason: `Not found: ${m.reason}` })),
+          ...r.failed.map((m) => ({ ...m, reason: `Failed: ${m.reason}` })),
+        ],
       };
     }
     return { ok: false, error: "Unknown action." };
@@ -270,6 +287,15 @@ function StoreMatchSection({ audit, canModify }) {
   );
 }
 
+const OUTCOME_SHORT = {
+  change: "can get a concrete change",
+  more_evidence: "need more evidence",
+  merchant_action: "need your action",
+  recommendation: "have a recommendation",
+  unsupported: "unsupported",
+};
+const OUTCOME_TONE = { change: "success", more_evidence: "warning", merchant_action: "info", recommendation: "neutral", unsupported: "neutral" };
+
 function FindingCard({ finding, canModify, selectedTheme, actionData, busy, ai, analysis }) {
   const submit = useSubmit();
   const [acknowledged, setAcknowledged] = useState(false);
@@ -280,6 +306,7 @@ function FindingCard({ finding, canModify, selectedTheme, actionData, busy, ai, 
       {
         intent: "prepare",
         findingKey: finding.key,
+        aiDraft: ai.enabled ? "yes" : "no",
         ...(optional && acknowledged ? { acknowledgeUnconfirmed: "yes" } : {}),
       },
       { method: "post" },
@@ -292,7 +319,7 @@ function FindingCard({ finding, canModify, selectedTheme, actionData, busy, ai, 
           <s-text type="strong">{finding.title}</s-text>
           <SeverityBadge severity={finding.severity} />
           <RiskBadge risk={finding.risk} />
-          <s-badge tone={finding.classification.status === "auto" ? "info" : "neutral"}>{finding.classification.label}</s-badge>
+          <s-badge tone={OUTCOME_TONE[finding.classification.outcome] || "neutral"}>{finding.classification.outcomeLabel}</s-badge>
           {finding.classification.actionLabel && <s-badge tone="neutral">{finding.classification.actionLabel}</s-badge>}
           {finding.changeScopes.map((s) => (
             <s-badge key={s.key} tone={s.key === "admin_shared" ? "warning" : "neutral"}>
@@ -312,7 +339,8 @@ function FindingCard({ finding, canModify, selectedTheme, actionData, busy, ai, 
           </s-badge>
         </s-stack>
         <s-text color="subdued">
-          {finding.affectedUrls.length} affected page{finding.affectedUrls.length === 1 ? "" : "s"} · audit id {finding.auditId}
+          {finding.affectedUrls.length} affected page{finding.affectedUrls.length === 1 ? "" : "s"}
+          {finding.supported ? ` · ${finding.plans.length} change${finding.plans.length === 1 ? "" : "s"} prepared` : ""} · audit id {finding.auditId}
           {finding.findingId ? ` · finding ${finding.findingId}` : ""}
         </s-text>
 
@@ -372,7 +400,15 @@ function FindingCard({ finding, canModify, selectedTheme, actionData, busy, ai, 
               </s-stack>
             ) : (
               <s-paragraph>
-                <s-text type="strong">{finding.classification.status === "unsupported" ? "Why this is unsupported: " : "Why this is manual: "}</s-text>
+                <s-text type="strong">
+                  {finding.classification.status === "unsupported"
+                    ? "Why this is unsupported: "
+                    : finding.classification.outcome === "merchant_action"
+                      ? "What you need to do: "
+                      : finding.classification.outcome === "more_evidence"
+                        ? "Why no change can be prepared yet: "
+                        : "Recommendation and why it is manual: "}
+                </s-text>
                 {finding.manualReason}
               </s-paragraph>
             )}
@@ -624,7 +660,7 @@ function PerformanceDetails({ performance }) {
     <s-box padding="small" background="subdued" borderRadius="base">
       <s-stack direction="block" gap="small-200">
         <s-text type="strong">
-          {`Google PageSpeed Insights · ${performance.strategy?.toLowerCase()} · ${performance.testedUrl}${performance.fetchTime ? ` · ${fmtDate(performance.fetchTime)}` : ""}`}
+          {`${performance.source === "lighthouse-local" ? "Lighthouse (run by the app, logged in with the storefront password)" : "Google PageSpeed Insights"} · ${performance.strategy?.toLowerCase()} · ${performance.testedUrl}${performance.fetchTime ? ` · ${fmtDate(performance.fetchTime)}` : ""}`}
         </s-text>
         <s-text>
           Lab (one Lighthouse run): performance score {plain(lab.performanceScore, "/100")} · LCP {ms(lab.lcpMs)} · FCP {ms(lab.fcpMs)} · CLS{" "}
@@ -735,6 +771,8 @@ export default function FixDashboard() {
   const bySeverity = Object.fromEntries(SEVERITIES.map((s) => [s, findings.filter((f) => f.severity === s).length]));
   const autoCount = findings.filter((f) => f.classification.status === "auto").length;
   const reviewCount = findings.filter((f) => f.classification.status === "manual_review").length;
+  const outcomeCounts = {};
+  for (const f of findings) outcomeCounts[f.classification.outcome] = (outcomeCounts[f.classification.outcome] || 0) + 1;
   const setFilter = (k) => (e) => setFilters((prev) => ({ ...prev, [k]: e.target.value }));
 
   const filterSelect = (key, label, options) => (
@@ -890,6 +928,11 @@ export default function FixDashboard() {
             <s-paragraph>
               {autoCount} with automatic fixes · {reviewCount} need manual review · {findings.length - autoCount - reviewCount} manual
             </s-paragraph>
+            <s-text color="subdued">
+              {Object.entries(outcomeCounts)
+                .map(([k, n]) => `${n} ${OUTCOME_SHORT[k]}`)
+                .join(" · ")}
+            </s-text>
           </s-box>
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-text color="subdued">Changes</s-text>

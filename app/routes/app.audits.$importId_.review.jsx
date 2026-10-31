@@ -4,13 +4,14 @@ import { useActionData, useLoaderData, useNavigation, useSubmit } from "react-ro
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { CHANGE_SCOPES, EXEC } from "../fixes/constants";
+import { CHANGE_SCOPES, EXEC, startingProposal } from "../fixes/constants";
 import { readJsonField, toActionError } from "../fixes/http.server";
 import { FIX_TYPES, eligibilityProblems } from "../fixes/registry.server";
 import {
   approvePlans,
   batchToken,
   executePlans,
+  findingsOf,
   loadImport,
   markManualReview,
   serializePlan,
@@ -30,12 +31,26 @@ export const loader = async ({ request, params }) => {
     where: { shop: session.shop, importId: imp.id },
     orderBy: [{ findingKey: "asc" }, { createdAt: "asc" }],
   });
+  const findings = Object.fromEntries(findingsOf(imp).map((f) => [f.key, f]));
   const plans = rows.map((r) => {
     const def = FIX_TYPES[r.fixType];
     const problems = def ? eligibilityProblems(def, { session, importRecord: imp }) : ["Unsupported fix type."];
     const scope = def ? CHANGE_SCOPES[def.changeScope] : null;
+    const finding = findings[r.findingKey];
+    // Audit evidence lines that name this resource (the audit labels them with its title).
+    const evidence = String(finding?.evidence || "")
+      .split("\n")
+      .filter((l) => r.resourceLabel && l.includes(`"${r.resourceLabel.replace(/ \(restore\)$/, "")}"`))
+      .slice(0, 5);
     return {
       ...serializePlan(r),
+      findingTitle: finding?.title ?? null,
+      evidence,
+      risk: def?.risk ?? null,
+      verification:
+        def?.executionKind === "theme"
+          ? "After writing, the theme file is read back and compared with the approved patch."
+          : "Before sending, the current value is read again and the change is refused if it changed. After saving, the field is read back from Shopify and compared with the approved value; other fields are checked for unintended changes.",
       label: `${r.rollbackOfId ? "Restore: " : ""}${def?.label || r.fixType}`,
       changeScope: def?.changeScope ?? null,
       scopeLabel: scope?.label ?? null,
@@ -170,22 +185,31 @@ export default function ReviewFixes() {
   const applying = plans.filter((p) => p.status === EXEC.APPLYING);
   const done = plans.filter((p) => [EXEC.APPLIED, EXEC.FAILED, EXEC.SKIPPED, EXEC.MANUAL_REVIEW].includes(p.status));
 
-  const [values, setValues] = useState(() =>
-    Object.fromEntries(review.map((p) => [p.id, p.proposed?.value ?? ""])),
-  );
+  const start = (p) => startingProposal(p, suggestions[p.id]);
+  const [values, setValues] = useState(() => Object.fromEntries(review.map((p) => [p.id, start(p).value])));
   const [selected, setSelected] = useState({});
   const [confirming, setConfirming] = useState(false);
-  // Which AI suggestion (if any) the merchant copied into each editor; sent with
-  // the approval so the audit trail records AI vs edited vs typed values.
-  const [aiSource, setAiSource] = useState({});
+  // Which AI suggestion (if any) is in each editor; sent with the approval so
+  // the audit trail records AI vs edited vs typed values.
+  const [aiSource, setAiSource] = useState(() =>
+    Object.fromEntries(review.map((p) => [p.id, start(p).aiSuggestionId]).filter(([, id]) => id)),
+  );
 
-  // Keep edited values for plans that are still in review after a reload.
+  // Keep edited values for plans that are still in review after a reload; an
+  // empty editor picks up an AI draft that arrived since.
   useEffect(() => {
-    setValues((prev) => {
-      const next = {};
-      for (const p of review) next[p.id] = prev[p.id] ?? p.proposed?.value ?? "";
-      return next;
-    });
+    const next = {};
+    const filled = {};
+    for (const p of review) {
+      const s = start(p);
+      if (String(values[p.id] ?? "").trim()) next[p.id] = values[p.id];
+      else {
+        next[p.id] = s.value;
+        if (s.aiSuggestionId) filled[p.id] = s.aiSuggestionId;
+      }
+    }
+    setValues(next);
+    setAiSource((prev) => ({ ...Object.fromEntries(Object.entries(prev).filter(([id]) => review.some((p) => p.id === id))), ...filled }));
     setSelected((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => review.some((p) => p.id === id))));
     if (actionData?.intent === "execute") setConfirming(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -298,6 +322,24 @@ export default function ReviewFixes() {
                       <PlanBadges plan={p} />
                     </s-stack>
                     {p.targetUrl && <s-text color="subdued">Audited page: {p.targetUrl}</s-text>}
+                    <s-text color="subdued">
+                      {`Target: ${p.resourceType} ${p.resourceId}${p.findingTitle ? ` · finding: ${p.findingTitle}` : ""} · risk: ${p.risk || "unknown"}`}
+                    </s-text>
+                    <details>
+                      <summary>Evidence and verification</summary>
+                      <s-stack direction="block" gap="small-200">
+                        {p.evidence.length > 0 ? (
+                          <s-unordered-list>
+                            {p.evidence.map((l, i) => (
+                              <s-list-item key={i}>{l}</s-list-item>
+                            ))}
+                          </s-unordered-list>
+                        ) : (
+                          <s-text color="subdued">The audit lists this page as affected; no per-item evidence line names it.</s-text>
+                        )}
+                        <s-text>{p.verification}</s-text>
+                      </s-stack>
+                    </details>
                     {p.impact && (
                       <s-banner tone={p.changeScope === "admin_shared" ? "warning" : "info"} heading={p.scopeLabel}>
                         {p.impact}
@@ -359,6 +401,13 @@ export default function ReviewFixes() {
                             {len > (p.field?.idealMax || Infinity) ? ` (over the recommended ${p.field.idealMax})` : ""}
                           </s-text>
                           {p.proposed?.note && <s-text color="subdued">{p.proposed.note}</s-text>}
+                          {!value.trim() && (
+                            <s-text type="strong">
+                              No value yet: your store data gave nothing to start from
+                              {ai.enabled ? " and no valid AI draft exists. Get an AI suggestion or write one." : ". Write one."} This change
+                              cannot be approved while it is empty.
+                            </s-text>
+                          )}
                         </s-stack>
                         )}
                       </s-grid>

@@ -164,7 +164,9 @@ All of these checks only read the store. Limits: 250 active products, 100 collec
 - **Speed, rendered accessibility and console errors** (`app/audit/pagespeed.server.js`):
   - Measured with Google PageSpeed Insights on the homepage when `PAGESPEED_API_KEY` is set.
   - Lab and field data are kept separate.
-  - Not measured for password-protected stores.
+  - Password-protected stores: measured by a local Lighthouse run in headless Chrome
+    (`app/audit/lighthouse.server.js`) after the password login, with the session cookie set for
+    the shop's host only. Not measured when no password is given or Chrome is missing.
   - Without a key, these show as `not_measured`.
 - **Coverage statuses:** `checked`, `partial`, `not_checked`, `rate_limited`, `blocked`,
   `error` and `not_measured`. Only `checked` and `partial` categories are scored.
@@ -292,7 +294,7 @@ generate plus migrate deploy).
 
 ## Current state and known gaps
 
-- 223 automated tests pass, all against mocks. **No real Shopify write has been tested yet.**
+- 236 automated tests pass, all against mocks. **No real Shopify write has been tested yet.**
 - On the test store (`testing-4vlbptjx.myshopify.com`, Horizon theme):
   - It has 0 active products.
   - The storefront is password protected, and Shopify bot protection sometimes returns 403 to the
@@ -302,7 +304,9 @@ generate plus migrate deploy).
   confirmed end to end on the real store.
 - **Render runs SQLite on an ephemeral disk,** so data is lost on every deploy. Moving to Postgres
   is pending a decision.
-- Speed, contrast and JavaScript errors need PageSpeed Insights (`PAGESPEED_API_KEY`) and a public storefront.
+- Speed, contrast and JavaScript errors need PageSpeed Insights (`PAGESPEED_API_KEY`) for a public
+  storefront, or the storefront password plus Chrome on the server (local Lighthouse) for a
+  password-protected one.
 - A separate legacy Node.js audit tool (Playwright, axe, Anthropic AI) still exists outside this
   repository. Its JSON can be imported, but the app no longer depends on it.
 

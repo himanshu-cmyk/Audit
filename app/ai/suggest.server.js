@@ -8,7 +8,9 @@ import { classifyFinding, getFixType, manualReason } from "../fixes/registry.ser
 import { findingsOf, isValidId, loadImport } from "../fixes/service.server";
 import { sourceLimitations } from "../fixes/reportContract.server";
 import { safeJsonParse } from "../fixes/text";
+import { fetchShopInfo } from "../fixes/storeMatch.server";
 import { readAiConfig } from "./config.server";
+import { resourceContext } from "./context.server";
 import { AiError } from "./errors.server";
 import { PROMPT_VERSION, SYSTEM_INSTRUCTION, analysisPrompt, valuePrompt } from "./prompts.server";
 import { PROPOSAL_RESPONSE_SCHEMA, validateAiProposal } from "./schema.server";
@@ -104,7 +106,11 @@ export async function suggestForPlan({ db, admin, session, planId, provider, env
   // belongs to this shop and gives the AI the real current value.
   const current = await def.handler.fetchCurrent({ admin, db, shop: session.shop }, plan);
   const rules = def.handler.field;
-  const { prompt, sourceText, evidenceIds } = valuePrompt({ finding, plan, fieldKey, rules, current });
+  // Bounded catalog facts (collection products, tags) so an empty description
+  // can still be drafted from real data instead of the resource name alone.
+  const context = fieldKey === "alt" ? {} : await resourceContext(admin, plan);
+  const shopName = fieldKey === "alt" ? null : (await fetchShopInfo(admin).catch(() => null))?.name ?? null;
+  const { prompt, sourceText, evidenceIds } = valuePrompt({ finding, plan, fieldKey, rules, current, context, shopName });
   const currentValue = def.handler.beforeValue(current);
 
   return withConcurrencyLimit(session.shop, env, () =>
@@ -164,11 +170,18 @@ const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
  * Stops at the per-minute limit or on a quota error and reports what is left.
  * Advisory only: nothing is approved or sent to Shopify.
  */
-export async function aiAssistImport({ db, admin, session, importId, provider, env = process.env, explain = true }) {
+export async function aiAssistImport({ db, admin, session, importId, provider, env = process.env, explain = true, findingKey = null }) {
   const imp = await loadImport(db, session.shop, importId);
   if (!imp) throw new FixError("NOT_FOUND", "Audit import not found.");
   const plans = await db.fixExecution.findMany({
-    where: { shop: session.shop, importId: imp.id, status: { in: [EXEC.NEEDS_REVIEW, EXEC.STALE] }, rollbackOfId: null, executionKind: "admin_api" },
+    where: {
+      shop: session.shop,
+      importId: imp.id,
+      status: { in: [EXEC.NEEDS_REVIEW, EXEC.STALE] },
+      rollbackOfId: null,
+      executionKind: "admin_api",
+      ...(findingKey ? { findingKey } : {}),
+    },
     orderBy: { createdAt: "asc" },
   });
   const haveValue = new Set(
@@ -181,7 +194,7 @@ export async function aiAssistImport({ db, admin, session, importId, provider, e
     ...plans.filter((p) => FIELD_BY_TYPE[p.fixType] && !haveValue.has(p.id)).map((p) => ({ kind: "value", run: () => suggestForPlan({ db, admin, session, planId: p.id, provider, env }) })),
     ...(explain
       ? findingsOf(imp)
-          .filter((f) => !haveAnalysis.has(f.key))
+          .filter((f) => !haveAnalysis.has(f.key) && (!findingKey || f.key === findingKey))
           .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
           .map((f) => ({ kind: "analysis", run: () => analyzeFinding({ db, session, importId: imp.id, findingKey: f.key, provider, env }) }))
       : []),

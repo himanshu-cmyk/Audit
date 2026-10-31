@@ -210,7 +210,9 @@ describe("product SEO end to end", () => {
     const reasons = r.manual.map((m) => m.reason).join(" ");
     expect(reasons).toMatch(/Preferences/);
     expect(reasons).toMatch(/write_online_store_pages/);
-    expect(reasons).toMatch(/No product with the handle "does-not-exist"/);
+    // Resources that do not exist are reported separately and never guessed.
+    expect(r.unresolved).toEqual([{ url: `https://${HOST}/products/does-not-exist`, reason: expect.stringMatching(/No product with the handle "does-not-exist"/) }]);
+    expect(r).toMatchObject({ affected: 4, prepared: 1, failed: [] });
   });
 });
 

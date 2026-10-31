@@ -327,7 +327,12 @@ optional:
   logged or shown in the browser.
 - Lab data (one Lighthouse run) and real-user field data (Chrome UX Report) are shown separately.
   Missing values show as "not available".
-- A password-protected store is not measured: Google cannot log in to it.
+- A password-protected store cannot be opened by Google, because the API accepts only a URL. When
+  the merchant enters the storefront password, the app logs in and runs the same Lighthouse audit
+  in its own headless Chrome (`app/audit/lighthouse.server.js`). The session cookie is set only for
+  the shop's own host, and neither it nor the password is stored. This needs Chrome or Chromium on
+  the server (found automatically, or set `CHROME_PATH`); the Docker image installs Chromium.
+  Without a password, or without Chrome, these show as "not measured" with the reason.
 - Without a key, these show as "not measured".
 - Quotas and pricing are set per Google Cloud project; check them in the Google Cloud console.
 
@@ -533,8 +538,31 @@ Free-tier caveats (Gemini API terms):
 - The free tier must not be used for apps offered to users in the EEA, UK or Switzerland.
 - Quotas are per project, are shown in AI Studio, and are not guaranteed.
 
-The app sends only finding text and product or collection title, type, brand and description. It
-sends no shop domain, IDs, customer or order data. Use a paid tier for real merchants.
+The app sends only finding text, the store name, product or collection title, type, brand,
+description and product tags, and, for a collection, the title, type, brand and a short
+description of up to 10 of its products. It sends no shop domain, IDs, prices, customer or order
+data. Use a paid tier for real merchants.
+
+From finding to proposal:
+- A grouped finding becomes one change per resource and field.
+- Resources the store does not have are listed as "not found"; they are never guessed.
+- A resource whose preparation fails is listed as "failed"; the other resources are still
+  prepared.
+- When the store has no text to start from (for example an empty collection description), the
+  proposal stays empty. If AI is on, it drafts a value from the store facts above.
+- A validated draft is pre-filled in the review editor and marked as AI. It is approved and
+  executed like any other value.
+- An empty value cannot be approved.
+
+Every finding shows one outcome:
+
+| Outcome | Meaning |
+|---|---|
+| Concrete change can be prepared | A supported fix type exists |
+| More evidence required | Rendered-page issues (accessibility, speed, JavaScript errors, H1) whose source file is unknown |
+| Merchant action required | Policies, password, domain, contact page, empty collections, unused themes, catalog content |
+| Specific recommendation | Other manual issues |
+| Unsupported | Issue ids the app cannot interpret |
 
 ### Admin fix types (resource · operation · scope · verification · recovery)
 

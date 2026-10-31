@@ -44,8 +44,8 @@ export function createFakeShop({
       state.products.set(p.id, p);
       return p;
     },
-    addCollection({ title, handle, description = "", seoTitle = null, seoDescription = null, productsCount = 3, image = null }) {
-      const c = { id: gid("Collection"), title, handle, description, seo: { title: seoTitle, description: seoDescription }, productsCount, image };
+    addCollection({ title, handle, description = "", seoTitle = null, seoDescription = null, productsCount = 3, image = null, products = [] }) {
+      const c = { id: gid("Collection"), title, handle, description, seo: { title: seoTitle, description: seoDescription }, productsCount, image, products };
       state.collections.set(c.id, c);
       return c;
     },
@@ -100,6 +100,22 @@ export function createFakeShop({
       if (!c) return { collectionUpdate: { collection: null, userErrors: [{ field: ["id"], message: "Collection does not exist" }] } };
       applySeo(c, collection.seo || {});
       return { collectionUpdate: { collection: { id: c.id, seo: seoOut(c) }, userErrors: [] } };
+    },
+    StoreAuditCollectionContext: ({ id }) => {
+      const c = state.collections.get(id);
+      return {
+        collection: c
+          ? {
+              id: c.id,
+              productsCount: { count: c.products.length || c.productsCount },
+              products: { nodes: c.products.slice(0, 10).map((p) => ({ title: p.title, productType: p.productType || "", vendor: p.vendor || "Acme", description: p.description })) },
+            }
+          : null,
+      };
+    },
+    StoreAuditProductContext: ({ id }) => {
+      const p = state.products.get(id);
+      return { product: p ? { id: p.id, tags: p.tags || [], productType: p.productType || "", vendor: p.vendor || "Acme" } : null };
     },
     StoreAuditProductMedia: ({ id }) => {
       const p = state.products.get(id);

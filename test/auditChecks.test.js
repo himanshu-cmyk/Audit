@@ -105,6 +105,55 @@ describe("password-protected storefront", () => {
   });
 });
 
+describe("speed of a password-protected store (local Lighthouse)", () => {
+  const lhr = (finalUrl = `https://${HOST}/`) => ({
+    finalUrl,
+    fetchTime: "2026-10-31T10:00:00.000Z",
+    categories: { performance: { score: 0.55 }, accessibility: { score: 0.9, auditRefs: [] } },
+    audits: { "largest-contentful-paint": { numericValue: 4600 }, "cumulative-layout-shift": { numericValue: 0.02 }, "total-blocking-time": { numericValue: 120 } },
+  });
+
+  it("measures the unlocked homepage with the login cookie, never with Google", async () => {
+    fake.state.passwordProtected = true;
+    const lighthouseRun = vi.fn(async () => lhr());
+    const pagespeedFetch = vi.fn();
+    const imp = await createInAppAudit({ ...base, storefrontPassword: SECRET, fetchPage: storefront().fetchPage, lighthouseRun, pagespeedFetch, env: { PAGESPEED_API_KEY: "k" } });
+    const report = JSON.parse(imp.reportJson);
+    expect(pagespeedFetch).not.toHaveBeenCalled();
+    expect(lighthouseRun).toHaveBeenCalledTimes(1);
+    const [{ url, cookies }] = lighthouseRun.mock.calls[0];
+    expect(url).toBe(`https://${HOST}/`);
+    expect(cookies).toContainEqual({ name: "storefront_digest", value: "ok" });
+    expect(report.performance).toMatchObject({ status: "checked", source: "lighthouse-local", lab: { performanceScore: 55, lcpMs: 4600 } });
+    expect(byId(imp, "perf.cwv.lcp").severity).toBe("high");
+    expect(report.coverage.find((c) => c.area.startsWith("Speed"))).toBeUndefined();
+    // Neither the password nor the session cookie is stored.
+    const row = JSON.stringify(await db.auditImport.findUnique({ where: { id: imp.id } }));
+    expect(row).not.toContain(SECRET);
+    expect(row).not.toContain("storefront_digest");
+  });
+
+  it("does not score the password page, and explains a missing Chrome or password", async () => {
+    fake.state.passwordProtected = true;
+    const onPasswordPage = await createInAppAudit({ ...base, storefrontPassword: SECRET, fetchPage: storefront().fetchPage, lighthouseRun: async () => lhr(`https://${HOST}/password`) });
+    expect(JSON.parse(onPasswordPage.reportJson).performance.status).toBe("not_checked");
+    const noChrome = await createInAppAudit({
+      ...base,
+      session: { ...base.session, shop: `${base.session.shop}c` },
+      storefrontPassword: SECRET,
+      fetchPage: storefront().fetchPage,
+      lighthouseRun: async () => {
+        throw new Error("No Chrome installations found.");
+      },
+    });
+    expect(JSON.parse(noChrome.reportJson).performance).toMatchObject({ status: "not_measured", message: expect.stringMatching(/CHROME_PATH/) });
+    const lighthouseRun = vi.fn();
+    const noPassword = await createInAppAudit({ ...base, session: { ...base.session, shop: `${base.session.shop}n` }, fetchPage: storefront().fetchPage, lighthouseRun });
+    expect(lighthouseRun).not.toHaveBeenCalled();
+    expect(JSON.parse(noPassword.reportJson).performance.message).toMatch(/Enter the storefront password/);
+  });
+});
+
 describe("password form and blocking (real Shopify page shape)", () => {
   // Shape of a real Shopify password page (2026): a Rails authenticity token,
   // no form_type field, data-remote form.

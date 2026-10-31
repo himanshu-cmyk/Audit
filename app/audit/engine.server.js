@@ -22,6 +22,7 @@ import { lookupByHandle } from "../fixes/resolve.server";
 import { safeFetchText } from "../fixes/safeFetch.server";
 import { cleanText } from "../fixes/text";
 import { accessibilityIssues, scanHtml } from "./html.server";
+import { measureHomepageLocally } from "./lighthouse.server";
 import { measureHomepage } from "./pagespeed.server";
 import { CHECK_STATUS, createStorefrontClient } from "./storefrontClient.server";
 import { FixError } from "../fixes/graphql.server";
@@ -856,7 +857,9 @@ function stopMessage(stopped) {
   return `The storefront returned an error (HTTP ${stopped.status ?? "?"}).`;
 }
 
-async function auditStorefront({ fetchPage, host, allowedHosts, base, sample, password, clientOptions = {} }, collect) {
+// `session.cookieHeader` is set after a successful password login so the local
+// Lighthouse run can open the same unlocked storefront. It is never put in the report.
+async function auditStorefront({ fetchPage, host, allowedHosts, base, sample, password, session = {}, clientOptions = {} }, collect) {
   const jar = cookieJar();
   const client = createStorefrontClient({ fetchPage, ...clientOptions });
   const opts = { allowedHosts, maxRedirects: 0, timeoutMs: 8000, maxBytes: 2_000_000 };
@@ -896,6 +899,7 @@ async function auditStorefront({ fetchPage, host, allowedHosts, base, sample, pa
           return result(status, `${UNLOCK_MESSAGES[u.reason]} Storefront page checks were skipped; the rest of the audit still ran.`);
         }
         unlocked = true;
+        session.cookieHeader = jar.header();
         res = await get(url);
       }
     } catch {
@@ -987,6 +991,7 @@ export async function runAudit({
   storefrontPassword = null,
   fetchPage = safeFetchText,
   pagespeedFetch = fetch,
+  lighthouseRun = undefined,
   env = process.env,
   storefrontClientOptions = {},
 }) {
@@ -1027,17 +1032,27 @@ export async function runAudit({
   }
   const policies = await auditPolicies(admin, base, collect, scopes);
   let storefront = { status: "skipped", message: "Storefront page checks were not requested.", pages: [] };
+  const session = {};
   if (includeStorefront) {
     const allowedHosts = [...new Set([host, String(shopInfo.myshopifyDomain || "").toLowerCase()].filter(Boolean))];
-    storefront = await auditStorefront({ fetchPage, host, allowedHosts, base, sample: adminScan.sample, password: storefrontPassword || null, clientOptions: storefrontClientOptions }, collect);
+    storefront = await auditStorefront({ fetchPage, host, allowedHosts, base, sample: adminScan.sample, password: storefrontPassword || null, session, clientOptions: storefrontClientOptions }, collect);
   }
 
-  // Speed, rendered accessibility and console errors, measured by Google.
+  // Speed, rendered accessibility and console errors: measured by Google, or by
+  // a local Lighthouse run when the store is password protected and was unlocked.
   let performance;
   if (!includeStorefront) {
     performance = { status: CHECK_STATUS.NOT_CHECKED, message: "Not requested (storefront checks were turned off).", findings: [] };
+  } else if (setup.passwordProtected && session.cookieHeader) {
+    performance = await measureHomepageLocally({ url: `${base}/`, cookieHeader: session.cookieHeader, env, runImpl: lighthouseRun });
   } else if (setup.passwordProtected) {
-    performance = { status: CHECK_STATUS.NOT_CHECKED, message: "Not measured: the store is password protected, and Google PageSpeed Insights cannot log in to it.", findings: [] };
+    performance = {
+      status: CHECK_STATUS.NOT_CHECKED,
+      message: storefrontPassword
+        ? "Not measured: the store is password protected and the password login did not succeed (see the storefront section)."
+        : "Not measured: the store is password protected. Enter the storefront password when running the audit so the app can log in and measure it.",
+      findings: [],
+    };
   } else {
     performance = await measureHomepage({ url: `${base}/`, env, fetchImpl: pagespeedFetch });
   }

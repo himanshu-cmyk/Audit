@@ -180,9 +180,68 @@ export function eligibilityProblems(def, { session, importRecord, env = process.
   return problems;
 }
 
+// What the merchant sees for issues the app does not change. Each one says
+// where to act in Shopify Admin and how to confirm the fix (re-run the audit).
+const RERUN = "Run the audit again afterwards to confirm the finding is gone.";
+const RENDERED =
+  "It was measured on the rendered storefront, and the evidence lists the affected elements but not which theme file, section or app outputs them. Without that source the app cannot prepare a safe, verifiable patch. Use the selectors and snippets in the evidence to find the source in Online Store > Themes > Edit code (on an unpublished copy), or in the app that injects it.";
+
 const MANUAL_WHY_BY_ID = {
   "seo.title.missing":
     "Every product and collection has a title, so a missing <title> tag comes from the theme (layout/theme.liquid), not Admin data. Check the theme manually.",
+  "trust.policies.missing": `Legal policies are your responsibility, so the app never drafts, publishes or changes them. Write each missing policy in Settings > Policies (admin.shopify.com > Settings > Policies), save it, and check it appears in your store's footer. ${RERUN}`,
+  "shopify.store.password-protected": `Remove the password in Online Store > Preferences when the store is ready to launch. Search engines and PageSpeed cannot see a password-protected store. ${RERUN}`,
+  "trust.domain.custom-missing": `Connect or buy a domain in Settings > Domains and make it primary. ${RERUN}`,
+  "trust.contact.missing": `Create a page in Online Store > Pages using the "contact" template and add it to your main or footer menu in Online Store > Navigation. The app does not create or publish pages. ${RERUN}`,
+  "catalog.collection.empty": `The listed collections have no products. Add products to them in Products > Collections, or hide them from navigation. The app never changes catalog contents. ${RERUN}`,
+  "shopify.themes.unused": "Review the listed unpublished themes in Online Store > Themes. Download a copy of any theme you may need, then delete the ones you no longer use. The app never deletes themes.",
+  "catalog.product.no-images": `Add product photos in Products > [product] > Media. ${RERUN}`,
+  "catalog.product.thin-description": `Expand these product descriptions in Products > [product] with accurate details only you know (materials, sizes, use). ${RERUN}`,
+  "catalog.product.zero-price": "Check these products in Products > [product] > Pricing. The app never changes prices.",
+  "admin.collection-image.alt-missing": `Add alt text in Products > Collections > [collection] > Collection image > Edit alt text. Not automated: the only API path re-submits the collection image, and that has not been verified to keep the existing image unchanged. ${RERUN}`,
+  "links.menu-broken": `Edit or remove the listed menu items in Online Store > Navigation. ${RERUN}`,
+  "shopify.favicon.missing": `Upload a favicon in Online Store > Themes > Customize > Theme settings > Logo and favicon. ${RERUN}`,
+  "perf.cwv.lcp": `Slow Largest Contentful Paint. ${RENDERED} The evidence names the measured LCP element when PageSpeed reported it; common causes are a large hero image without width/height or a lazy-loaded hero.`,
+  "code.console-errors": `JavaScript errors were logged while the homepage loaded. The evidence shows the message and script source when PageSpeed reported them. The app does not write JavaScript patches from a generic error; check the named script (often an app embed) and disable or update it. ${RERUN}`,
+};
+
+// Issues only the merchant can act on (business content, settings, legal text).
+const MERCHANT_ACTION_IDS = new Set([
+  "trust.policies.missing",
+  "shopify.store.password-protected",
+  "trust.domain.custom-missing",
+  "trust.contact.missing",
+  "catalog.collection.empty",
+  "shopify.themes.unused",
+  "catalog.product.no-images",
+  "catalog.product.thin-description",
+  "catalog.product.zero-price",
+]);
+
+// Issues measured on the rendered page whose source file is not known.
+const isRenderedOnly = (id) =>
+  id.startsWith("a11y.") || id.startsWith("perf.") || ["code.console-errors", "code.render-blocking", "seo.h1.multiple", "seo.h1.missing", "trust.mixed-content", "shopify.app-bloat"].includes(id);
+
+/**
+ * What the merchant can expect for a finding:
+ * change (a concrete change can be prepared), more_evidence, merchant_action,
+ * recommendation, or unsupported.
+ */
+export function findingOutcome(finding, c) {
+  if (c.status === "unsupported") return "unsupported";
+  if (c.status === "auto") return c.actionClass === "needs_evidence" ? "more_evidence" : "change";
+  if (c.status === "manual_review") return "more_evidence";
+  if (MERCHANT_ACTION_IDS.has(finding.auditId)) return "merchant_action";
+  if (isRenderedOnly(finding.auditId)) return "more_evidence";
+  return "recommendation";
+}
+
+export const OUTCOME_LABELS = {
+  change: "Concrete change can be prepared",
+  more_evidence: "More evidence required",
+  merchant_action: "Merchant action required",
+  recommendation: "Specific recommendation",
+  unsupported: "Unsupported",
 };
 
 const MANUAL_WHY = {
@@ -196,6 +255,9 @@ const MANUAL_WHY = {
 
 export function manualReason(finding) {
   if (MANUAL_WHY_BY_ID[finding.auditId]) return MANUAL_WHY_BY_ID[finding.auditId];
+  if (isRenderedOnly(finding.auditId) && fixTypesForAuditId(finding.auditId).length === 0) {
+    return `${finding.title || "This issue"}: ${RENDERED}`;
+  }
   if (finding.audit?.fixType && MANUAL_WHY[finding.audit.fixType] && fixTypesForAuditId(finding.auditId).length === 0) {
     return MANUAL_WHY[finding.audit.fixType];
   }
@@ -209,6 +271,12 @@ export function manualReason(finding) {
 // cause in Shopify and propose a verifiable change; the check itself still runs at
 // prepare time and may downgrade individual pages to manual review.
 export function classifyFinding(finding) {
+  const c = classifyAction(finding);
+  const outcome = findingOutcome(finding, c);
+  return { ...c, outcome, outcomeLabel: OUTCOME_LABELS[outcome] };
+}
+
+function classifyAction(finding) {
   const out = (status, actionClass, extra) => ({ status, actionClass, actionLabel: ACTION_CLASSES[actionClass], ...extra });
   if (finding.conflict || !isKnownSourceId(finding.auditId)) {
     return out("unsupported", "unsupported", {

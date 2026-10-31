@@ -37,7 +37,7 @@ import { cleanLine, safeJsonParse } from "./text";
 import { unsupportedClaims } from "../ai/schema.server";
 
 const ID_RE = /^[a-z0-9]{10,40}$/i;
-const MAX_URLS_PER_PREPARE = 25;
+const MAX_URLS_PER_PREPARE = 50;
 const STUCK_APPLYING_MS = 10 * 60 * 1000;
 
 export function isValidId(id) {
@@ -172,6 +172,7 @@ export async function createInAppAudit({
   themeId = null,
   fetchPage,
   pagespeedFetch,
+  lighthouseRun,
   env,
   storefrontClientOptions,
 }) {
@@ -189,6 +190,7 @@ export async function createInAppAudit({
     storefrontPassword: includeStorefront && typeof storefrontPassword === "string" && storefrontPassword ? storefrontPassword.slice(0, 200) : null,
     ...(fetchPage ? { fetchPage } : {}),
     ...(pagespeedFetch ? { pagespeedFetch } : {}),
+    ...(lighthouseRun ? { lighthouseRun } : {}),
     ...(env ? { env } : {}),
     ...(storefrontClientOptions ? { storefrontClientOptions } : {}),
   });
@@ -241,7 +243,7 @@ export async function setImportTheme({ db, admin, session, importId, themeId }) 
 // a proposal: it must be reviewed, approved and confirmed before anything runs.
 export async function prepareAllFixable({ db, admin, session, importId }) {
   const imp = await requireImport(db, session.shop, importId);
-  const totals = { findings: 0, created: 0, updated: 0, unchanged: 0, manual: [], skipped: [] };
+  const totals = { findings: 0, created: 0, updated: 0, unchanged: 0, prepared: 0, manual: [], unresolved: [], failed: [], skipped: [] };
   for (const f of findingsOf(imp)) {
     const c = classifyFinding(f);
     if (c.status !== "auto") continue;
@@ -255,7 +257,10 @@ export async function prepareAllFixable({ db, admin, session, importId }) {
       totals.created += r.created;
       totals.updated += r.updated;
       totals.unchanged += r.unchanged;
+      totals.prepared += r.prepared;
       totals.manual.push(...r.manual.map((m) => ({ ...m, key: f.key })));
+      totals.unresolved.push(...r.unresolved.map((m) => ({ ...m, key: f.key })));
+      totals.failed.push(...r.failed.map((m) => ({ ...m, key: f.key })));
     } catch (err) {
       if (!(err instanceof FixError) || err.code === "SESSION_EXPIRED") throw err;
       totals.skipped.push({ key: f.key, reason: err.message });
@@ -318,6 +323,11 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
   const ctx = ctxFor({ admin, db, session, shopName: shopInfo.name });
   const drafts = [];
   const manual = [];
+  // Resources the audit named that do not exist in this store (never guessed),
+  // and resources whose preparation failed. Other resources still get prepared.
+  const unresolved = [];
+  const failed = [];
+  const isFatal = (err) => !(err instanceof FixError) || err.code === "SESSION_EXPIRED";
 
   const apiDefs = defs.filter((d) => d.executionKind === "admin_api");
   const themeDefs = defs.filter((d) => d.executionKind === "theme");
@@ -325,9 +335,10 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
   if (apiDefs.length) {
     const urls = finding.affectedUrls.slice(0, MAX_URLS_PER_PREPARE);
     if (finding.affectedUrls.length > MAX_URLS_PER_PREPARE) {
-      manual.push({ url: null, reason: `Only the first ${MAX_URLS_PER_PREPARE} affected pages were prepared.` });
+      manual.push({ url: null, reason: `Only the first ${MAX_URLS_PER_PREPARE} of ${finding.affectedUrls.length} affected pages were prepared. Prepare again after reviewing these.` });
     }
     const cache = new Map();
+    // One resource at a time: keeps Admin API usage within rate limits.
     for (const url of urls) {
       const c = classifyStoreUrl(url, imp.auditedHost);
       const forKind = apiDefs.filter((d) => d.targetKind === c.kind);
@@ -337,10 +348,16 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
         continue;
       }
       const cacheKey = `${c.kind}:${c.handle}`;
-      if (!cache.has(cacheKey)) cache.set(cacheKey, await lookupByHandle(admin, c.kind, c.handle));
+      try {
+        if (!cache.has(cacheKey)) cache.set(cacheKey, await lookupByHandle(admin, c.kind, c.handle));
+      } catch (err) {
+        if (isFatal(err)) throw err;
+        failed.push({ url, reason: `Could not look up this ${c.kind}: ${err.message}` });
+        continue;
+      }
       const resource = cache.get(cacheKey);
       if (!resource) {
-        manual.push({ url, reason: `No ${c.kind} with the handle "${c.handle}" exists in this store.` });
+        unresolved.push({ url, reason: `No ${c.kind} with the handle "${c.handle}" exists in this store, so no change was prepared for it.` });
         continue;
       }
       for (const def of forKind) {
@@ -348,8 +365,9 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
         try {
           out = await def.handler.prepare(ctx, { resource, url, finding });
         } catch (err) {
-          if (!(err instanceof FixError) || !ROOT_CAUSE_CODES.includes(err.code)) throw err;
-          manual.push({ url, reason: `Requires manual review: ${err.message}` });
+          if (isFatal(err)) throw err;
+          if (ROOT_CAUSE_CODES.includes(err.code)) manual.push({ url, reason: `Requires manual review: ${err.message}` });
+          else failed.push({ url, reason: `${def.label} could not be prepared: ${err.message}` });
           continue;
         }
         if (!out.length && def.type === "product_image_alt") {
@@ -371,6 +389,8 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
       try {
         for (const d of await def.handler.prepare(ctx, { themeId, finding })) drafts.push({ def, d });
       } catch (err) {
+        // The chosen theme is one explicit target: a wrong theme (e.g. the live
+        // one) rejects the whole request instead of being counted per resource.
         if (!(err instanceof FixError) || !ROOT_CAUSE_CODES.includes(err.code)) throw err;
         manual.push({ url: null, reason: `Requires manual review: ${err.message}` });
       }
@@ -430,7 +450,25 @@ export async function prepareFinding({ db, admin, session, importId, findingKey,
       unchanged++; // APPROVED / APPLYING / APPLIED are never silently reset
     }
   }
-  return { created, updated, unchanged, manual };
+  return {
+    created,
+    updated,
+    unchanged,
+    manual,
+    unresolved,
+    failed,
+    affected: finding.affectedUrls.length,
+    prepared: new Set(drafts.map(({ def, d }) => `${def.type}|${d.resourceId}`)).size,
+  };
+}
+
+// One line for the merchant: how the affected resources of a finding ended up.
+export function prepareSummary(r) {
+  const parts = [`${r.affected} affected page${r.affected === 1 ? "" : "s"}`, `${r.prepared} change${r.prepared === 1 ? "" : "s"} prepared`];
+  if (r.manual?.length) parts.push(`${r.manual.length} need manual review`);
+  if (r.unresolved?.length) parts.push(`${r.unresolved.length} not found in the store`);
+  if (r.failed?.length) parts.push(`${r.failed.length} failed`);
+  return parts.join(" · ");
 }
 
 // ---------------------------------------------------------------- approve

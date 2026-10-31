@@ -5,7 +5,7 @@
 // Every piece of evidence has an id; the model must cite ids in evidenceRefs and
 // the validator rejects ids that were not sent.
 
-export const PROMPT_VERSION = "2026-10-28.2";
+export const PROMPT_VERSION = "2026-10-29.1";
 
 export const SYSTEM_INSTRUCTION = [
   "You help a Shopify merchant understand website audit findings and draft SEO text for review.",
@@ -49,8 +49,9 @@ const FIELD_TASK = {
 };
 
 /** Prompt for drafting one field value. Returns { prompt, data, sourceText, evidenceIds }. */
-export function valuePrompt({ finding, plan, fieldKey, rules, current }) {
+export function valuePrompt({ finding, plan, fieldKey, rules, current, context = {}, shopName = null }) {
   const isAlt = fieldKey === "alt";
+  const products = context.collectionProducts || [];
   const currentValue = isAlt ? current.alt ?? null : current[fieldKey] ?? null;
   const { evidence, ids } = evidenceList(
     isAlt
@@ -64,11 +65,21 @@ export function valuePrompt({ finding, plan, fieldKey, rules, current }) {
           { id: "A1", source: "audit", label: "Finding", text: plain(finding.title, 300) },
           { id: "A2", source: "audit", label: "Audit detail", text: plain(finding.description, 600) },
           { id: "S1", source: "store", label: "Title", text: plain(current.title, 255) },
-          { id: "S2", source: "store", label: "Product type", text: plain(current.guard?.productType, 120) },
-          { id: "S3", source: "store", label: "Brand", text: plain(current.guard?.vendor, 120) },
+          { id: "S2", source: "store", label: "Product type", text: plain(current.guard?.productType || context.productType, 120) },
+          { id: "S3", source: "store", label: "Brand", text: plain(current.guard?.vendor || context.vendor, 120) },
           { id: "S4", source: "store", label: "Description", text: plain(current.description, MAX_DESCRIPTION) },
           { id: "S5", source: "store", label: "Current SEO title", text: plain(current.seoTitle, 255) || "(empty)" },
           { id: "S6", source: "store", label: "Current SEO description", text: plain(current.seoDescription, 512) || "(empty)" },
+          { id: "S7", source: "store", label: "Product tags", text: (context.tags || []).join(", ") },
+          {
+            id: "S8",
+            source: "store",
+            label: `Products in this collection (first ${products.length}${context.productCount != null ? ` of ${context.productCount}` : ""})`,
+            text: products
+              .map((p) => [p.title, p.productType && `type: ${p.productType}`, p.vendor && `brand: ${p.vendor}`, p.description].filter(Boolean).join(" – "))
+              .join("\n"),
+          },
+          { id: "S9", source: "store", label: "Store name", text: plain(shopName, 120) },
         ],
   );
   const data = {
@@ -81,7 +92,7 @@ export function valuePrompt({ finding, plan, fieldKey, rules, current }) {
     imageAvailableToYou: isAlt ? false : undefined,
     evidence,
   };
-  const task = `${FIELD_TASK[fieldKey]}. Keep it within lengthRules, plain text only (no HTML, Liquid, links or emoji), no keyword stuffing. Set requiredResourceType to "${plan.resourceType}" and patchCandidate to null.${
+  const task = `${FIELD_TASK[fieldKey]}. Keep it within lengthRules, plain text only (no HTML, Liquid, links or emoji), no keyword stuffing. Set requiredResourceType to "${plan.resourceType}" and patchCandidate to null. An empty current value is not a reason to give up: write it from the store facts given (for a collection, from the products it contains, not from its name alone). Make it specific to this ${plan.resourceType.toLowerCase()}. Only if the facts are too thin to describe it accurately, set proposedValue to null and say exactly what is missing.${
     isAlt
       ? " You cannot see the image, so describe it only in terms of the product facts given; do not invent colours, angles or contents, and list in uncertainties that the merchant should add what the image actually shows."
       : ""

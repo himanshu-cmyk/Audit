@@ -235,3 +235,13 @@ export const CHANGE_SCOPES = {
       "Edits a file in the selected unpublished theme only. Your live store is unaffected until you publish that theme yourself.",
   },
 };
+
+// The value a review editor starts with. The store-data proposal wins; when it
+// is empty, a VALID AI draft for this exact change is used and marked as AI so
+// the approval records it. An empty value is never shown as a finished proposal.
+export function startingProposal(plan, suggestion) {
+  const stored = typeof plan.proposed?.value === "string" ? plan.proposed.value : "";
+  if (stored.trim() || plan.rollbackOfId) return { value: stored, aiSuggestionId: null };
+  const ai = suggestion?.status === "VALID" && suggestion.executionId === plan.id ? suggestion.output?.proposedValue : null;
+  return typeof ai === "string" && ai.trim() ? { value: ai, aiSuggestionId: suggestion.id } : { value: "", aiSuggestionId: null };
+}

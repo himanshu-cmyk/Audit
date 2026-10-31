@@ -1,5 +1,7 @@
 FROM node:20-alpine
-RUN apk add --no-cache openssl
+# Chromium runs the local Lighthouse check for password-protected storefronts.
+RUN apk add --no-cache openssl chromium
+ENV CHROME_PATH=/usr/bin/chromium-browser
 
 EXPOSE 3000
 

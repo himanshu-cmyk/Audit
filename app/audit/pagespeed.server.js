@@ -5,9 +5,9 @@
 // The API key (PAGESPEED_API_KEY) stays on the server: it is sent in a request
 // header, never in the URL, and never returned to the browser or logged.
 //
-// Limits: Google cannot get past storefront password protection, so a
-// password-protected store is reported as not checked (never as the password
-// page's own score). Field (real-user) data exists only for sites with enough
+// Limits: Google cannot get past storefront password protection (the API takes
+// only a URL), so a password-protected store is measured by lighthouse.server.js
+// instead, or reported as not checked (never as the password page's own score). Field (real-user) data exists only for sites with enough
 // Chrome traffic. Missing metrics are reported as unavailable, never as 0.
 
 import { CHECK_STATUS } from "./storefrontClient.server";
@@ -44,17 +44,55 @@ function fieldMetric(metrics, name, scale = 1) {
   return p === null ? null : { p75: round(p / scale, scale === 1 ? 0 : 3), category: typeof m.category === "string" ? m.category : null };
 }
 
+// Query strings are stripped from any URL so tokens in links never reach the report.
+const oneLine = (s, n) =>
+  String(s || "")
+    .replace(/https?:\/\/[^\s"'<>)]+/g, (u) => safeUrl(u))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, n);
+
+// One affected element: its label, CSS selector, HTML snippet and axe's
+// explanation (for colour contrast this holds the measured ratio and colours).
+function nodeEvidence(item) {
+  const n = item?.node;
+  if (!n || typeof n !== "object") return null;
+  const parts = [
+    n.nodeLabel && `"${oneLine(n.nodeLabel, 60)}"`,
+    n.selector && `selector ${oneLine(n.selector, 120)}`,
+    n.snippet && `html ${oneLine(n.snippet, 160)}`,
+    n.explanation && oneLine(String(n.explanation).split("\n").slice(0, 2).join(" "), 220),
+  ].filter(Boolean);
+  return parts.length ? `- ${parts.join(" · ")}` : null;
+}
+
+function lcpElement(x) {
+  // Lighthouse 10+ nests the element table inside a list; older versions do not.
+  const items = x?.details?.items || [];
+  const table = items.find((i) => i?.type === "table") || x?.details;
+  const node = (table?.items || []).find((i) => i?.node)?.node;
+  const e = node ? nodeEvidence({ node }) : null;
+  return e ? e.slice(2) : null;
+}
+
+// Where the Lighthouse run happened: on Google's servers (PSI) or in this app's
+// own headless Chrome (used when the storefront is unlocked with its password).
+export const LIGHTHOUSE_SOURCES = {
+  psi: { id: "pagespeed-insights", name: "PageSpeed Insights", where: "on Google's servers" },
+  local: { id: "lighthouse-local", name: "Lighthouse", where: "in the app's own Chrome, logged in with the storefront password" },
+};
+
 /** Pure parser for a PSI v5 response. Returns { status, ...result } and finding inputs. */
-export function parsePagespeed(json, { requestedUrl, strategy }) {
+export function parsePagespeed(json, { requestedUrl, strategy, source = LIGHTHOUSE_SOURCES.psi }) {
   const lh = json?.lighthouseResult;
   if (!lh || typeof lh !== "object" || typeof lh.audits !== "object") {
-    return { status: CHECK_STATUS.ERROR, message: "PageSpeed Insights returned an unexpected response.", findings: [] };
+    return { status: CHECK_STATUS.ERROR, message: `${source.name} returned an unexpected response.`, findings: [] };
   }
   const finalUrl = typeof lh.finalUrl === "string" ? lh.finalUrl : typeof lh.finalDisplayedUrl === "string" ? lh.finalDisplayedUrl : null;
   if (finalUrl && /\/password\/?$/.test(new URL(finalUrl, requestedUrl).pathname)) {
     return {
       status: CHECK_STATUS.NOT_CHECKED,
-      message: "PageSpeed Insights was redirected to the storefront password page, so the real store could not be measured.",
+      message: `${source.name} was redirected to the storefront password page, so the real store could not be measured.`,
       findings: [],
     };
   }
@@ -89,9 +127,16 @@ export function parsePagespeed(json, { requestedUrl, strategy }) {
     .map((x) => ({ id: String(x.id).slice(0, 80), title: String(x.title || "").slice(0, 160), savingsMs: Math.round(x.details.overallSavingsMs) }));
 
   const findings = [];
-  const src = `PageSpeed Insights (Lighthouse lab, ${strategy.toLowerCase()})`;
+  const src = `${source.name} (Lighthouse lab, ${strategy.toLowerCase()})`;
   if (lab.lcpMs !== null && lab.lcpMs > 2500) {
-    findings.push({ id: "perf.cwv.lcp", severity: lab.lcpMs > 4000 ? "high" : "medium", evidence: `${src}: LCP ${(lab.lcpMs / 1000).toFixed(2)}s (target ≤ 2.5s)` });
+    const el = lcpElement(audit("largest-contentful-paint-element"));
+    findings.push({
+      id: "perf.cwv.lcp",
+      severity: lab.lcpMs > 4000 ? "high" : "medium",
+      evidence: `${src}: LCP ${(lab.lcpMs / 1000).toFixed(2)}s (target ≤ 2.5s)${el ? `\nLCP element: ${el}` : "\nLCP element: not reported by PageSpeed"}${
+        opportunities.length ? `\nBiggest measured opportunities: ${opportunities.slice(0, 3).map((o) => `${o.title} (~${(o.savingsMs / 1000).toFixed(1)}s)`).join("; ")}` : ""
+      }`,
+    });
   }
   if (lab.cls !== null && lab.cls > 0.1) {
     findings.push({ id: "perf.cwv.cls", severity: lab.cls > 0.25 ? "high" : "medium", evidence: `${src}: CLS ${lab.cls} (target ≤ 0.1)` });
@@ -107,29 +152,29 @@ export function parsePagespeed(json, { requestedUrl, strategy }) {
   for (const ref of Array.isArray(a11yRefs) ? a11yRefs : []) {
     const x = audit(ref?.id);
     if (!x || x.scoreDisplayMode !== "binary" || x.score !== 0 || !/^[a-z0-9-]{2,80}$/.test(String(ref.id))) continue;
-    const items = (x.details?.items || [])
-      .slice(0, 5)
-      .map((i) => String(i?.node?.selector || i?.node?.snippet || "").slice(0, 120))
-      .filter(Boolean);
+    const items = (x.details?.items || []).slice(0, 5).map(nodeEvidence).filter(Boolean);
     findings.push({
       id: `a11y.${ref.id}`,
       severity: ref.id === "color-contrast" ? "high" : "medium",
       title: String(x.title || ref.id).slice(0, 200),
-      evidence: `${src}: ${(x.details?.items || []).length} element(s)${items.length ? `: ${items.join(", ")}` : ""}`,
+      evidence: `${src}: ${(x.details?.items || []).length} element(s)${items.length ? `\n${items.join("\n")}` : ""}`,
     });
   }
   const consoleErrors = audit("errors-in-console");
   if (consoleErrors && consoleErrors.score === 0) {
     const items = (consoleErrors.details?.items || [])
       .slice(0, 5)
-      .map((i) => `${String(i?.source || "error").slice(0, 30)}: ${String(i?.description || "").replace(/https?:\/\/\S+/g, (u) => safeUrl(u)).slice(0, 200)}`);
+      .map((i) => {
+        const where = typeof i?.sourceLocation?.url === "string" ? ` (in ${safeUrl(i.sourceLocation.url)})` : "";
+        return `${String(i?.source || "error").slice(0, 30)}: ${String(i?.description || "").replace(/https?:\/\/\S+/g, (u) => safeUrl(u)).slice(0, 200)}${where}`;
+      });
     findings.push({ id: "code.console-errors", severity: "medium", evidence: `${src}: browser errors logged to the console\n${items.join("\n")}` });
   }
 
   return {
     status: CHECK_STATUS.CHECKED,
-    message: `Homepage measured by Google PageSpeed Insights (${strategy.toLowerCase()}).`,
-    source: "pagespeed-insights",
+    message: `Homepage measured by ${source === LIGHTHOUSE_SOURCES.psi ? "Google PageSpeed Insights" : `Lighthouse ${source.where}`} (${strategy.toLowerCase()}).`,
+    source: source.id,
     strategy,
     testedUrl: safeUrl(requestedUrl),
     finalUrl: finalUrl ? safeUrl(finalUrl) : null,
@@ -138,7 +183,7 @@ export function parsePagespeed(json, { requestedUrl, strategy }) {
     field,
     opportunities,
     limitations: [
-      "Lab metrics come from one simulated Lighthouse run on Google's servers and vary between runs.",
+      `Lab metrics come from one simulated Lighthouse run ${source.where} and vary between runs.`,
       field ? `Real-user data is the Chrome UX Report 75th percentile for the ${field.scope} over the last 28 days.` : "No real-user (field) data is available for this store.",
       "Interaction to Next Paint (INP) is only available from real-user data; Total Blocking Time is the lab substitute.",
       "Automated accessibility checks find some issues only; they do not prove WCAG compliance.",
